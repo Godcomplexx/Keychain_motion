@@ -451,15 +451,25 @@ Verified results:
 * the firmware flashes successfully
 * `app_main()` runs
 * startup messages appear through ESP-IDF logging
-* GPIO placeholders are centralized in `board_config.h`
+* the verified ESP32-C3 Super Mini GPIO mapping is centralized in `board_config.h`
 
-Milestone 1 was tested on an ESP32-C6 development board. The final target is
-ESP32-C3, so the target and board GPIO mapping will be verified again when the
-ESP32-C3 board is available.
+Milestone 1 was first tested on an ESP32-C6 development board and was later
+verified successfully on the final ESP32-C3 Super Mini target.
 
-Next milestone:
+Current status:
 
-* Milestone 2 — I2C scanner
+* the I2C scanner builds, flashes, and finds the OLED at address `0x3C`
+* the normal scan range `0x08` through `0x77` has been restored
+* Milestone 3 — OLED startup screen is completed
+* the SSD1306-compatible driver initializes successfully
+* the OLED displays `SMART KEYCHAIN` and `READY` correctly and remains stable
+* no abnormal OLED heating is present with the corrected wiring
+* MPU6050 scanner verification is still pending
+
+Next learning step:
+
+* connect the MPU6050 to the shared I2C bus and confirm its address
+* then start Milestone 4 — MPU6050 raw data
 
 ### Learning Review / Проверка знаний
 
@@ -473,15 +483,15 @@ memory. The firmware is normally changed by rebuilding and flashing it again.
 компьютере. Прошивка записывает эти файлы во flash-память контроллера. Обычно
 программу изменяют, повторно собирают и заново прошивают.
 
-#### 2. Why are SDA and SCL set to `-1`?
+#### 2. Why were SDA and SCL initially set to `-1`?
 
-**English:** `-1` means that the GPIO pins have not been assigned yet. It does
-not mean that no devices are connected. Safe SDA and SCL pins must be selected
-after checking the exact development board pinout.
+**English:** `-1` meant that the GPIO pins had not been assigned yet. It did not
+mean that no devices were connected. After checking the exact development
+board pinout, the prototype selected GPIO5 for SDA and GPIO6 for SCL.
 
-**Русский:** `-1` означает, что GPIO ещё не назначены. Это не означает, что
-устройства не подключены. Безопасные выводы SDA и SCL нужно выбрать после
-проверки распиновки конкретной платы.
+**Русский:** `-1` означало, что GPIO ещё не были назначены. Это не означало, что
+устройства не подключены. После проверки распиновки платы для прототипа были
+выбраны GPIO5 для SDA и GPIO6 для SCL.
 
 #### 3. Which log messages confirm that `app_main()` ran?
 
@@ -492,6 +502,171 @@ point was called and the application code executed.
 **Русский:** ESP-IDF выводит `Calling app_main()`, после чего приложение выводит
 `Smart Motion Keychain started`. Эти сообщения подтверждают, что точка входа
 была вызвана и код приложения выполнился.
+
+### I2C Learning Review / Проверка знаний I2C
+
+#### 1. What does the scanner address range do?
+
+**English:** The start and end definitions set the inclusive range used by the
+scanner loop. A range from `0x03` through `0x77` probes every address between
+those values. However, `0x03` through `0x07` are reserved or special-purpose
+addresses, so this project normally uses `0x08` through `0x77`. The temporary
+range `0x3C` through `0x3D` checks only the two common OLED addresses.
+
+**Русский:** Начальное и конечное определения задают включительный диапазон
+цикла scanner. Диапазон от `0x03` до `0x77` проверяет все адреса между этими
+значениями. Однако `0x03–0x07` зарезервированы или имеют специальное назначение,
+поэтому проект обычно использует `0x08–0x77`. Временный диапазон `0x3C–0x3D`
+проверяет только два распространённых адреса OLED.
+
+#### 2. What is an I2C bus?
+
+**English:** An I2C bus is a shared communication connection that lets one
+controller communicate with multiple addressed devices over the same SDA and
+SCL lines. The devices must also share ground.
+
+**Русский:** I2C bus — это общая линия связи, которая позволяет одному
+контроллеру общаться с несколькими адресуемыми устройствами через одни и те же
+линии SDA и SCL. У устройств также должна быть общая земля.
+
+#### 3. What is SDA?
+
+**English:** SDA means Serial Data. It carries addresses, commands, and data in
+both directions between the ESP32-C3 and I2C devices.
+
+**Русский:** SDA означает Serial Data — последовательные данные. Эта линия
+передаёт адреса, команды и данные в обоих направлениях между ESP32-C3 и
+устройствами I2C.
+
+#### 4. What is SCL?
+
+**English:** SCL means Serial Clock. The I2C controller generates this clock so
+all devices know when each bit on SDA is valid and should be read.
+
+**Русский:** SCL означает Serial Clock — последовательный тактовый сигнал.
+Контроллер I2C создаёт этот сигнал, чтобы устройства знали, когда каждый бит на
+SDA действителен и должен быть прочитан.
+
+#### 5. What is an I2C address?
+
+**English:** An I2C address is normally a 7-bit identifier for one device on a
+shared bus. The controller sends the address first so only the matching device
+responds. Scanner output uses the raw 7-bit value without the read/write bit.
+
+**Русский:** I2C address — это обычно 7-битный идентификатор устройства на общей
+шине. Контроллер сначала отправляет адрес, поэтому отвечает только совпавшее
+устройство. Scanner показывает исходное 7-битное значение без бита чтения или
+записи.
+
+#### 6. Why does the scanner check addresses?
+
+**English:** The scanner does not yet know which devices are present. It sends
+each candidate address and checks for acknowledgement. This confirms the real
+address and basic electrical communication before an OLED or sensor driver is
+added.
+
+**Русский:** Scanner ещё не знает, какие устройства присутствуют. Он отправляет
+каждый возможный адрес и проверяет подтверждение. Это определяет настоящий
+адрес и проверяет базовую электрическую связь до добавления драйвера OLED или
+датчика.
+
+#### 7. What does ACK mean?
+
+**English:** ACK means acknowledgement. The addressed device pulls SDA low
+during the acknowledgement clock pulse to confirm that it received the
+address. `i2c_master_probe()` reports this as `ESP_OK`.
+
+**Русский:** ACK означает acknowledgement — подтверждение. Устройство с нужным
+адресом притягивает SDA к LOW во время такта подтверждения, сообщая, что адрес
+получен. `i2c_master_probe()` возвращает для этого `ESP_OK`.
+
+#### 8. What does NACK mean?
+
+**English:** NACK means not acknowledged. No device pulled SDA low for that
+address. During a scan this normally means that the address is unused, and
+ESP-IDF reports `ESP_ERR_NOT_FOUND`. NACK differs from a timeout, which can mean
+that the bus is stuck or wired incorrectly.
+
+**Русский:** NACK означает отсутствие подтверждения. Ни одно устройство не
+притянуло SDA к LOW для этого адреса. Во время scan это обычно означает, что
+адрес свободен, а ESP-IDF возвращает `ESP_ERR_NOT_FOUND`. NACK отличается от
+timeout, который может означать зависшую шину или неправильное подключение.
+
+#### 9. Why is an OLED usually at `0x3C` or `0x3D`?
+
+**English:** Common SSD1306-compatible OLED controllers use a hardware address
+selection input. Depending on how that input or a module solder jumper is
+connected, the 7-bit address is usually `0x3C` or `0x3D`. The scanner must still
+confirm the address of the actual module.
+
+**Русский:** Распространённые OLED-контроллеры, совместимые с SSD1306, имеют
+аппаратный вход выбора адреса. В зависимости от его подключения или перемычки
+на модуле 7-битный адрес обычно равен `0x3C` или `0x3D`. Scanner всё равно должен
+подтвердить адрес конкретного модуля.
+
+#### 10. Why does `board_config.h` store SDA and SCL?
+
+**English:** SDA and SCL GPIO numbers describe the physical board wiring. They
+belong in `board_config.h` so hardware changes are made in one place and driver
+code does not contain duplicated raw GPIO numbers. Scanner behavior, such as
+its address range, belongs in `i2c_bus.c` instead.
+
+**Русский:** Номера GPIO для SDA и SCL описывают физическое подключение платы.
+Они хранятся в `board_config.h`, чтобы аппаратные изменения выполнялись в одном
+месте, а драйверы не содержали повторяющиеся необработанные номера GPIO.
+Поведение scanner, например диапазон адресов, относится к `i2c_bus.c`.
+
+### OLED Learning Review / Проверка знаний OLED
+
+#### 1. Why was an ACK at `0x3C` not enough to confirm the OLED driver?
+
+**English:** ACK confirmed that a device responded at `0x3C` and that basic I2C
+communication worked. It did not confirm the controller model, initialization
+commands, framebuffer format, or actual pixel output.
+
+**Русский:** ACK подтвердил, что устройство отвечает по адресу `0x3C` и базовая
+связь I2C работает. Он не подтверждал модель контроллера, команды
+инициализации, формат framebuffer или реальный вывод пикселей.
+
+#### 2. What confirmed SSD1306 compatibility?
+
+**English:** The driver initialized without errors, the framebuffer was sent,
+and the OLED displayed `SMART KEYCHAIN` and `READY` correctly and stably. This
+confirms practical SSD1306 compatibility for this project.
+
+**Русский:** Драйвер инициализировался без ошибок, framebuffer был отправлен, а
+OLED правильно и стабильно показал `SMART KEYCHAIN` и `READY`. Это подтверждает
+практическую совместимость с SSD1306 для данного проекта.
+
+#### 3. Why must the I2C bus remain initialized after scanning?
+
+**English:** The scanner and OLED share the same bus. After scanning, the OLED
+still needs that bus to receive initialization commands and framebuffer data.
+Deleting the bus would invalidate the handle used by the display driver.
+
+**Русский:** Scanner и OLED используют одну общую шину. После сканирования OLED
+всё ещё нужна эта шина для получения команд инициализации и данных framebuffer.
+Удаление шины сделало бы handle драйвера дисплея недействительным.
+
+#### 4. Where is the image stored before it is sent to the OLED?
+
+**English:** It is stored in the private static `s_framebuffer` array inside
+`oled_display.c`. A 128x64 monochrome image needs 1024 bytes because each pixel
+uses one bit.
+
+**Русский:** Изображение хранится в приватном статическом массиве
+`s_framebuffer` внутри `oled_display.c`. Монохромному изображению 128x64 нужен
+1024-байтовый буфер, потому что каждый пиксель занимает один бит.
+
+#### 5. Why does the image remain after `app_main()` returns?
+
+**English:** Returning from `app_main()` does not turn off the ESP32-C3 or the
+OLED. The OLED controller keeps the received image in its own display memory
+until power is removed, the controller is reset, or new data overwrites it.
+
+**Русский:** Завершение `app_main()` не выключает ESP32-C3 или OLED. Контроллер
+OLED хранит полученное изображение в собственной памяти дисплея до отключения
+питания, сброса контроллера или записи новых данных.
 
 ---
 
