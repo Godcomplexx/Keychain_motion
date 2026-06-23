@@ -468,8 +468,13 @@ Current status:
 
 Next learning step:
 
-* connect the MPU6050 to the shared I2C bus and confirm its address
-* then start Milestone 4 — MPU6050 raw data
+* MPU6050 work is paused until the sensor is available
+* a software-only FLUID animation preview has been added using simulated tilt
+* the animation firmware builds and runs successfully on the real OLED
+* the first blob concept is technically valid but its visual design is not
+  accepted; visual refinement is intentionally deferred
+* when the sensor is available, connect it to the shared I2C bus and confirm
+  its address before starting MPU6050 raw data
 
 ### Learning Review / Проверка знаний
 
