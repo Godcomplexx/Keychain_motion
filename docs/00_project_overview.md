@@ -675,7 +675,421 @@ OLED хранит полученное изображение в собстве�
 
 ---
 
-## 14. Portfolio Description Draft
+## 14. Pixel-Particle Fluid Prototype Specification / Спецификация пиксельной жидкости
+
+### 14.1 Status and purpose
+
+| Metadata | Value |
+|---|---|
+| Author | Project owner |
+| Date | 2026-06-23 |
+| Status | **Draft — review before manual implementation** |
+| Reviewer | Project owner |
+
+The purpose of this prototype is to replace the current three-circle blob with
+96 independent particles. Every particle has its own position and velocity,
+participates in a simplified physical simulation, and is drawn as exactly one
+OLED pixel.
+
+This is an educational approximation of liquid behavior, not a complete fluid
+dynamics simulation. The prototype must make particle motion, gravity,
+collisions, viscosity, and cohesion visible and understandable before the real
+MPU6050 is connected.
+
+### 14.2 What the first prototype must contain
+
+* **FR-1:** The simulation MUST contain exactly 96 particles.
+* **FR-2:** Every particle MUST be rendered as one OLED pixel.
+* **FR-3:** Physical coordinates MUST remain fractional even though output
+  coordinates are integers.
+* **FR-4:** The prototype MUST use simulated tilt instead of MPU6050 data.
+* **FR-5:** Particles MUST collide with all four display boundaries.
+* **FR-6:** Particles MUST repel each other at very short distances.
+* **FR-7:** Nearby particles MUST exchange velocity through viscosity.
+* **FR-8:** Nearby particles MUST have weak cohesion so the group tends to
+  remain together.
+* **FR-9:** The simulation MUST perform several fixed physics steps before one
+  OLED framebuffer update.
+* **FR-10:** The prototype MUST NOT add metaballs, filled circles, an MPU6050
+  driver, a state machine, or a new RTOS task.
+
+### 14.3 Particle data model
+
+Each particle needs four independent values:
+
+| Field | Type | Meaning | Constraint |
+|---|---|---|---|
+| `x` | `float` | horizontal subpixel position | visible range after collision resolution |
+| `y` | `float` | vertical subpixel position | visible range after collision resolution |
+| `velocity_x` | `float` | horizontal velocity | finite pixels per second |
+| `velocity_y` | `float` | vertical velocity | finite pixels per second |
+
+The values should use `float` for the first learning implementation. The
+particle is converted to integer coordinates only during rendering. For
+example, a particle can move through positions `24.10`, `24.35`, and `24.70`
+before it is finally rendered at pixel 25. Keeping only integer positions would
+discard these small movements and make the animation jump or stop at low
+speeds.
+
+Suggested organization inside `fluid_animation.c`:
+
+```text
+particle type
+    x
+    y
+    velocity_x
+    velocity_y
+
+private array
+    96 particles
+```
+
+The array should remain private to the animation component. The public
+`fluid_animation_render()` API does not need to change.
+
+#### API contract
+
+```c
+void fluid_animation_reset(void);
+
+esp_err_t fluid_animation_render(float tilt_x,
+                                 float tilt_y,
+                                 float delta_seconds);
+```
+
+`fluid_animation_reset()` MUST initialize all 96 private particle records.
+`fluid_animation_render()` MUST clamp normalized tilt inputs, advance the
+simulation, draw one framebuffer, and return the result of OLED transmission.
+No particle array or mutable particle pointer may be exposed through the public
+header.
+
+### 14.4 Initial particle placement
+
+`fluid_animation_reset()` should place the 96 particles in a compact 12 by 8
+grid near the center of the display:
+
+```text
+12 columns x 8 rows = 96 particles
+```
+
+Start with one pixel of space between neighboring integer positions and set all
+velocities to zero. Calculate the starting offset from `BOARD_OLED_WIDTH` and
+`BOARD_OLED_HEIGHT` instead of hardcoding an absolute top-left position.
+
+This regular arrangement is intentional. Random placement can create several
+particles at the same location and makes the first collision test harder to
+understand. Small random offsets may be studied later, after the regular version
+works.
+
+### 14.5 Fixed physics steps
+
+The OLED and the simulation do not need to run at the same frequency. At the
+current 100 kHz I2C speed, one complete framebuffer update is relatively slow.
+The physics should therefore perform several smaller steps before sending one
+frame to the display.
+
+Initial timing target:
+
+```text
+physics step:       0.02 seconds (50 Hz)
+steps per frame:    5
+display frame time: approximately 0.10 seconds (10 Hz)
+```
+
+For every displayed frame:
+
+```text
+repeat 5 times
+    apply one 0.02-second physics step
+
+clear framebuffer
+draw all 96 particles
+present framebuffer once
+```
+
+Do not call `oled_display_present()` after every physics step. That would send
+five almost identical framebuffers and would make I2C transmission the main
+workload.
+
+Non-functional requirements:
+
+* **NFR-1:** Physics MUST use a fixed `0.02 s` step for the first prototype.
+* **NFR-2:** One displayed frame MUST use five physics substeps and exactly one
+  framebuffer transmission.
+* **NFR-3:** All particle positions and velocities MUST remain finite during a
+  continuous five-minute hardware test.
+* **NFR-4:** Pair processing SHOULD initially use the direct unique-pair method
+  so the implementation remains understandable.
+* **NFR-5:** Rendering or OLED errors MUST be returned to `main.c` rather than
+  hidden.
+
+### 14.6 Order of one physics step
+
+Implement and test one stage at a time in this order:
+
+1. Apply simulated gravity to every particle velocity.
+2. Process every unique particle pair once (`i < j`).
+3. Apply short-range repulsion when two particles are too close.
+4. Apply viscosity when two particles are near each other.
+5. Apply weak cohesion when particles are near but not overlapping.
+6. Update positions from the resulting velocities.
+7. Resolve collisions with the four screen boundaries.
+8. Clamp unreasonable velocity if numerical instability is observed.
+
+Do not implement all forces at once. First verify gravity and walls, then add
+repulsion, then viscosity, and finally cohesion. This makes it possible to see
+which formula introduces incorrect behavior.
+
+### 14.7 Simulated gravity
+
+The existing normalized `tilt_x` and `tilt_y` inputs remain in the range
+`-1.0` to `1.0`. Treat them as the direction and strength of gravity:
+
+```text
+acceleration_x = tilt_x * gravity_strength
+acceleration_y = tilt_y * gravity_strength
+
+velocity_x += acceleration_x * step_seconds
+velocity_y += acceleration_y * step_seconds
+```
+
+Use the existing sine and cosine signals in `main.c` at first. Later the
+MPU6050 will replace only these two inputs; it should not replace particle
+physics or rendering.
+
+### 14.8 Pair interaction rules
+
+For every unique pair, calculate the horizontal and vertical difference and
+the squared distance. Compare squared distances where possible so a square-root
+calculation is not performed for pairs that are too far apart.
+
+#### Repulsion
+
+Repulsion prevents particles from remaining on top of each other. If the
+distance is smaller than the minimum separation, move or accelerate the two
+particles in opposite directions. Apply equal and opposite corrections so the
+pair does not gain motion in only one direction.
+
+If the distance is zero, there is no valid direction between the particles.
+Use a small deterministic separation direction in this case. Never divide by
+zero.
+
+#### Viscosity
+
+Viscosity reduces the difference between the velocities of nearby particles.
+If one particle moves quickly and its neighbor moves slowly, both velocities
+should become slightly closer during each step. Do not immediately assign the
+same velocity to both particles; apply only a small fraction of the difference.
+
+Without viscosity, particles bounce independently and resemble dry beads or
+sand. With too much viscosity, the entire group behaves like one rigid block.
+
+#### Cohesion
+
+Cohesion is a weak attraction between particles inside a limited interaction
+radius. It helps the group remain together after movement. Cohesion must be
+weaker than repulsion. Otherwise particles collapse into the same pixel and the
+simulation becomes unstable.
+
+### 14.9 Boundary collisions
+
+The valid visible coordinates are:
+
+```text
+x: 0 through BOARD_OLED_WIDTH - 1
+y: 0 through BOARD_OLED_HEIGHT - 1
+```
+
+When a particle crosses a boundary:
+
+1. return its position to the nearest valid coordinate
+2. reverse the velocity component perpendicular to that wall
+3. multiply the reversed velocity by wall restitution
+
+A restitution below `1.0` removes energy on impact. A value of `1.0` produces a
+perfect bounce and usually looks less like liquid.
+
+### 14.10 Starting parameter ranges
+
+These are starting ranges for experiments, not final visual settings:
+
+| Parameter | Suggested starting range | Effect |
+|---|---:|---|
+| particle count | exactly 96 | size of the first experiment |
+| physics step | `0.02 s` | simulation stability |
+| substeps per frame | `5` | physics updates per OLED frame |
+| gravity strength | `25–50 px/s²` | response to tilt |
+| minimum separation | `1.0–1.5 px` | particle overlap prevention |
+| interaction radius | `2.5–4.0 px` | viscosity/cohesion neighborhood |
+| wall restitution | `0.2–0.5` | wall bounce strength |
+| viscosity fraction | `0.05–0.20` | velocity equalization per step |
+| cohesion acceleration | `1–5 px/s²` | attraction between neighbors |
+
+Change only one parameter at a time and record the visible result. First find a
+stable result; visual refinement comes after stability.
+
+### 14.11 Rendering
+
+Rendering should not change particle physics:
+
+1. clear the framebuffer once
+2. round or convert every particle position to integer `x` and `y`
+3. call `oled_display_set_pixel(x, y, true)` once per particle
+4. call `oled_display_present()` once after all particles are drawn
+5. return the display error to the caller
+
+Two particles can occasionally round to the same OLED pixel even when their
+fractional positions differ. This is acceptable in the first prototype. The
+physics should still keep their fractional positions separate.
+
+### 14.12 Complexity and later optimization
+
+The first implementation may compare every particle with every other particle.
+For 96 particles, processing only unique pairs requires:
+
+```text
+96 x 95 / 2 = 4560 pair checks per physics step
+```
+
+This direct approach is suitable for learning because it is easy to inspect.
+Do not add a spatial grid until hardware measurement shows that pair processing
+is too slow. A later version with several hundred particles should use a grid
+or buckets so each particle checks only nearby cells.
+
+### 14.13 Edge cases to handle
+
+* **EC-1:** Two particles have exactly the same position.
+* **EC-2:** `delta_seconds` is zero or negative.
+* **EC-3:** A delayed frame produces an unexpectedly large `delta_seconds`.
+* **EC-4:** A particle crosses a wall by more than one pixel during one step.
+* **EC-5:** Velocity grows until particles continuously jump across the display.
+* **EC-6:** Several particles render to the same integer pixel.
+* **EC-7:** `oled_display_present()` returns an error.
+
+Clamp an excessive time step and, if necessary, excessive velocity. Do not hide
+OLED transmission errors.
+
+### 14.14 Implementation sequence for manual learning
+
+Complete and test these checkpoints separately:
+
+1. Replace the single blob state with 96 particle records.
+2. Place a static 12 by 8 pixel group and verify that exactly 96 particles are
+   processed.
+3. Add simulated gravity without pair interaction.
+4. Add wall collisions and verify all four edges.
+5. Add pair repulsion and test overlapping particles.
+6. Add viscosity with cohesion still disabled.
+7. Add weak cohesion and tune it below the repulsion strength.
+8. Run five fixed physics substeps for each OLED frame.
+9. Measure whether the hardware animation remains responsive.
+10. Document the chosen constants and why they were selected.
+
+After every checkpoint, build, flash, and observe the real OLED before adding
+the next behavior.
+
+### 14.15 Acceptance criteria
+
+* **AC-1 (FR-1, FR-3):** Given a reset, when the first frame is rendered, then
+  all 96 particle records are initialized in a centered 12 by 8 arrangement.
+* **AC-2 (FR-4):** Given simulated tilt, when physics advances, then the
+  particle group moves in the tilt direction.
+* **AC-3 (FR-5):** Given a particle reaches any display edge, when the next step
+  completes, then its position remains inside the valid display coordinates.
+* **AC-4 (FR-6, EC-1):** Given two particles are closer than the minimum
+  separation, when repulsion is applied, then their separation increases
+  without division by zero.
+* **AC-5 (FR-7):** Given neighboring particles have different velocities, when
+  viscosity is applied, then the velocity difference decreases gradually
+  rather than becoming zero immediately.
+* **AC-6 (FR-8):** Given particles begin separating, when weak cohesion is
+  active, then nearby particles tend to remain grouped without collapsing into
+  one position.
+* **AC-7 (FR-9, NFR-1, NFR-2):** Given one display frame is produced, then
+  physics advances five times but the framebuffer is transmitted only once.
+* **AC-8 (FR-2):** Given 96 initialized particles, when rendering completes,
+  then each particle contributes exactly one `oled_display_set_pixel()` call.
+* **AC-9 (FR-4):** Given no MPU6050 is connected, then the complete prototype
+  still runs from simulated `tilt_x` and `tilt_y` values.
+* **AC-10 (FR-10):** The implementation creates no new RTOS task and does not
+  add motion states, metaballs, TinyML, or an MPU6050 driver.
+* **AC-11 (NFR-3):** Given a five-minute continuous hardware run, then all
+  particle positions and velocities remain finite.
+* **AC-12 (NFR-5, EC-7):** Given OLED transmission fails, when rendering
+  returns, then the same non-success `esp_err_t` reaches `main.c`.
+* **AC-13 (EC-2, EC-3):** Given a non-positive or unexpectedly large frame
+  delta, when rendering begins, then the physics step is clamped to the defined
+  safe range and no non-finite value is produced.
+* **AC-14 (EC-4, EC-5):** Given a particle crosses a wall or reaches excessive
+  velocity, when collision resolution completes, then the particle returns to
+  the visible range and its velocity remains within the selected safety limit.
+* **AC-15 (EC-6):** Given multiple fractional positions round to one OLED
+  pixel, when the frame is rendered, then the framebuffer remains valid and the
+  particles keep their independent fractional states.
+* **AC-16 (NFR-4):** Given 96 particles, when one direct pair pass completes,
+  then every unique pair is processed once for a total of 4560 checks.
+
+### 14.16 Out of scope for the first prototype
+
+* **OS-1:** Physically accurate Navier–Stokes simulation — too complex for this
+  learning checkpoint.
+* **OS-2:** SPH density and pressure solver — reserved for a later experiment.
+* **OS-3:** Metaball or filled-surface rendering — particles must remain visible
+  as individual pixels.
+* **OS-4:** Hundreds or thousands of particles — performance is not yet
+  measured.
+* **OS-5:** Spatial acceleration grid — direct pair checks are easier to study.
+* **OS-6:** Real MPU6050 input — hardware is not yet available.
+* **OS-7:** Shake, stillness, FLUID, SLEEP, and TIME transitions — separate
+  milestones.
+* **OS-8:** Automatic 400 kHz I2C change — requires a separate hardware test.
+
+### 14.17 Answers to the review questions / Ответы на вопросы
+
+#### 1. Why should particle coordinates not be stored only as integers?
+
+**English:** Physics often moves a particle by less than one pixel during a
+single step. Fractional coordinates preserve these small changes until they
+accumulate into visible movement. Integer-only coordinates would repeatedly
+discard the fractional part, causing jerky motion or preventing slow movement
+entirely.
+
+**Русский:** За один физический шаг частица часто перемещается меньше чем на
+один пиксель. Дробные координаты сохраняют маленькие изменения, пока они не
+накопятся в видимое движение. Целые координаты каждый раз отбрасывали бы
+дробную часть, поэтому движение стало бы дёрганым или полностью остановилось
+бы на маленькой скорости.
+
+#### 2. What keeps the particles together?
+
+**English:** Weak cohesion attracts nearby particles, while viscosity reduces
+differences in their velocities. Cohesion alone would collapse the group, so
+short-range repulsion must remain stronger and prevent overlap. The balance of
+repulsion, viscosity, and cohesion creates the simplified liquid behavior.
+
+**Русский:** Слабое сцепление притягивает соседние частицы, а вязкость уменьшает
+разницу между их скоростями. Одно только сцепление сжало бы все частицы в одну
+точку, поэтому отталкивание на маленькой дистанции должно быть сильнее и не
+давать частицам накладываться. Баланс отталкивания, вязкости и сцепления создаёт
+упрощённое поведение жидкости.
+
+#### 3. Why perform several physics steps for one displayed frame?
+
+**English:** Smaller physics steps make acceleration and collisions more stable
+and reduce the chance that a particle jumps through another particle or a wall.
+The OLED is slower than the desired physics frequency, so several simulation
+steps can be calculated before one framebuffer transmission. This improves
+physics without increasing I2C traffic.
+
+**Русский:** Маленькие физические шаги делают ускорение и столкновения
+стабильнее и уменьшают вероятность того, что частица перескочит через другую
+частицу или стену. OLED обновляется медленнее желаемой частоты физики, поэтому
+можно вычислить несколько шагов симуляции перед одной отправкой framebuffer.
+Физика становится точнее, а количество передач по I2C не увеличивается.
+
+---
+
+## 15. Portfolio Description Draft
 
 ESP32-C3 Smart Motion Keychain is a compact embedded product prototype with an OLED display and accelerometer-based interaction. The device reacts to motion, displays fluid-like animations, enters a sleep animation after inactivity, and shows a time-style animation after a shake gesture.
 
