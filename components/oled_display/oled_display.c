@@ -67,7 +67,12 @@ static const uint8_t *font_5x7_find(char character)
     return NULL;
 }
 
-static void framebuffer_set_pixel(int x, int y)
+void oled_display_clear(void)
+{
+    memset(s_framebuffer, 0, sizeof(s_framebuffer));
+}
+
+void oled_display_set_pixel(int x, int y, bool on)
 {
     if (x < 0 || x >= BOARD_OLED_WIDTH ||
         y < 0 || y >= BOARD_OLED_HEIGHT) {
@@ -77,7 +82,14 @@ static void framebuffer_set_pixel(int x, int y)
     /* SSD1306 stores eight vertical pixels in each page byte. */
     const size_t byte_index = (size_t)x +
                               ((size_t)y / 8U) * BOARD_OLED_WIDTH;
-    s_framebuffer[byte_index] |= (uint8_t)(1U << ((unsigned int)y % 8U));
+    const uint8_t pixel_mask =
+        (uint8_t)(1U << ((unsigned int)y % 8U));
+
+    if (on) {
+        s_framebuffer[byte_index] |= pixel_mask;
+    } else {
+        s_framebuffer[byte_index] &= (uint8_t)~pixel_mask;
+    }
 }
 
 static void framebuffer_draw_character(int x, int y, char character)
@@ -90,7 +102,7 @@ static void framebuffer_draw_character(int x, int y, char character)
     for (int column = 0; column < FONT_WIDTH; ++column) {
         for (int row = 0; row < FONT_HEIGHT; ++row) {
             if ((columns[column] & (1U << row)) != 0U) {
-                framebuffer_set_pixel(x + column, y + row);
+                oled_display_set_pixel(x + column, y + row, true);
             }
         }
     }
@@ -172,20 +184,29 @@ esp_err_t oled_display_show_startup(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    memset(s_framebuffer, 0, sizeof(s_framebuffer));
+    oled_display_clear();
     framebuffer_draw_text(22, 20, "SMART KEYCHAIN");
     framebuffer_draw_text(49, 36, "READY");
 
-    esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel_handle,
-                                               0, 0,
-                                               BOARD_OLED_WIDTH,
-                                               BOARD_OLED_HEIGHT,
-                                               s_framebuffer);
+    esp_err_t err = oled_display_present();
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "Startup screen sent to OLED");
     }
 
     return err;
+}
+
+esp_err_t oled_display_present(void)
+{
+    if (s_panel_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    return esp_lcd_panel_draw_bitmap(s_panel_handle,
+                                     0, 0,
+                                     BOARD_OLED_WIDTH,
+                                     BOARD_OLED_HEIGHT,
+                                     s_framebuffer);
 }
 
 esp_err_t oled_display_deinit(void)
