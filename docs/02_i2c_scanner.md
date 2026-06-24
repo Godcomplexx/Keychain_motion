@@ -8,7 +8,7 @@ The scanner will verify that the ESP32-C3 can communicate with the two devices
 planned for the shared I2C bus:
 
 * 0.96 inch 128x64 I2C OLED display
-* MPU6050 GY-521 accelerometer/gyroscope module
+* ADXL345 GY-291 accelerometer module
 
 This milestone is complete when the serial monitor reports the addresses of the
 connected devices. It does not draw on the OLED or read motion data.
@@ -30,7 +30,7 @@ Before implementing the scanner, I need to understand:
 ### ESP-IDF terminology
 
 In this project, the ESP32-C3 is the **I2C master**. It starts communication and
-chooses which device to contact. The OLED and MPU6050 are **I2C devices** that
+chooses which device to contact. The original OLED and ADXL345 are **I2C devices** that
 respond when the master sends their addresses.
 
 The future `i2c_bus` component will own bus initialization and scanning. The
@@ -75,13 +75,13 @@ All devices on one bus connect to the same SDA and SCL lines:
 
 ```text
 ESP32-C3 SDA ----+---- OLED SDA
-                 +---- MPU6050 SDA
+                 +---- ADXL345 SDA
 
 ESP32-C3 SCL ----+---- OLED SCL
-                 +---- MPU6050 SCL
+                 +---- ADXL345 SCL
 
 ESP32-C3 GND ----+---- OLED GND
-                 +---- MPU6050 GND
+                 +---- ADXL345 GND
 ```
 
 The final SDA and SCL GPIO numbers must be selected from the exact ESP32-C3
@@ -99,10 +99,10 @@ such as `0x3C` or `0x68`.
 Common addresses for the planned modules are:
 
 * OLED display: usually `0x3C`, sometimes `0x3D`
-* MPU6050: usually `0x68`, or `0x69` when its AD0 address-selection pin is high
+* ADXL345: `0x53` when SDO is low, or `0x1D` when SDO is high
 
 These are expected values, not proof of the actual wiring. Module variants,
-solder jumpers, and the MPU6050 AD0 pin can change an address. The scanner must
+solder jumpers, and the ADXL345 SDO pin can change an address. The scanner must
 measure what is really present.
 
 The scanner should check the normal usable 7-bit range from `0x08` through
@@ -111,16 +111,16 @@ should not be probed in this beginner milestone.
 
 ---
 
-## 6. Why the OLED and MPU6050 Can Share One Bus
+## 6. Why Multiple Devices Can Share One Bus
 
-The OLED and MPU6050 can use the same SDA and SCL wires because the ESP32-C3
+The original OLED and ADXL345 could use the same SDA and SCL wires because the ESP32-C3
 addresses one device at a time.
 
 For example:
 
 1. The ESP32-C3 sends address `0x3C` to communicate with the OLED.
-2. The MPU6050 sees that the address does not match and stays inactive.
-3. The ESP32-C3 later sends address `0x68` to communicate with the MPU6050.
+2. The ADXL345 sees that the address does not match and stays inactive.
+3. The ESP32-C3 later sends address `0x53` to communicate with the ADXL345.
 4. The OLED sees that the address does not match and stays inactive.
 
 Sharing works as long as:
@@ -136,7 +136,7 @@ Sharing works as long as:
 ## 7. Why the Scanner Comes Before Device Drivers
 
 An OLED driver assumes that the display is powered, wired correctly, and
-responding at a known address. An MPU6050 driver makes the same assumptions
+responding at a known address. An ADXL345 driver makes the same assumptions
 about the sensor.
 
 If a complete driver fails immediately, several causes are possible:
@@ -153,7 +153,7 @@ If a complete driver fails immediately, several causes are possible:
 
 A scanner removes much of this uncertainty. It tests only the shared bus and
 address acknowledgement. Once the expected addresses appear, later OLED and
-MPU6050 problems can be investigated inside their own drivers.
+ADXL345 problems can be investigated inside their own drivers.
 
 This milestone therefore verifies the foundation before more code is added.
 
@@ -170,7 +170,7 @@ I (...) i2c_bus: Found I2C device at address 0x68
 I (...) i2c_bus: I2C scan complete: 2 device(s) found
 ```
 
-The exact OLED and MPU6050 addresses may differ. If nothing acknowledges, the
+The exact device addresses may differ. If nothing acknowledges, the
 output should clearly report that result:
 
 ```text
@@ -201,7 +201,18 @@ I (...) i2c_bus: I2C scan complete: 1 device(s) found
 
 This confirms that the OLED acknowledges its address and that basic I2C
 communication works. It does not yet confirm the OLED controller model or that
-the display pixels work. MPU6050 verification is still pending.
+the display pixels work. The later ADXL345 test is recorded below.
+
+### Verified ADXL345 Result — 2026-06-24
+
+```text
+Board: ESP32-C3 Super Mini
+I2C SDA: GPIO5
+I2C SCL: GPIO6
+Connected device: ADXL345 GY-291
+Detected 7-bit address: 0x53
+Result: PASS
+```
 
 ---
 
@@ -214,7 +225,7 @@ the display pixels work. MPU6050 verification is still pending.
 * [x] Confirm that the connected OLED and ESP32-C3 share a common ground.
 * [x] Power the connected OLED from the ESP32-C3 `3V3` pin.
 * [ ] Check whether the OLED and GY-521 modules contain pull-up resistors.
-* [x] Record the detected OLED address and expected MPU6050 addresses.
+* [x] Record the detected OLED and ADXL345 addresses.
 
 ### Future firmware work
 
@@ -236,7 +247,7 @@ the display pixels work. MPU6050 verification is still pending.
 * [x] The scanner starts without an I2C initialization error.
 * [x] The serial monitor reports the connected OLED at `0x3C`.
 * [ ] Disconnecting one device removes only that device from the next scan.
-* [x] No OLED drawing or MPU6050 register-reading logic exists yet.
+* [x] The scanner milestone itself contains no device register-reading logic.
 
 ---
 
@@ -274,11 +285,11 @@ way.
 ### Forgetting common ground
 
 SDA and SCL signals need a shared electrical reference. Connect the grounds of
-the ESP32-C3, OLED, and MPU6050.
+the ESP32-C3, OLED, and ADXL345.
 
 ### Adding device logic too early
 
-Do not draw pixels, initialize an OLED controller, read MPU6050 registers, add
+Do not draw pixels, initialize an OLED controller, read ADXL345 registers, add
 RTOS tasks, or add TinyML during this milestone.
 
 ---
@@ -324,7 +335,7 @@ components/i2c_bus/i2c_bus.c
 10. Treat an address NACK as a normal scan result, not a fatal error.
 11. Keep `main.c` small.
 12. Do not implement an OLED driver.
-13. Do not implement an MPU6050 driver or read sensor registers.
+13. Do not implement an ADXL345 driver or read sensor registers.
 14. Do not add RTOS tasks.
 15. Do not add TinyML.
 16. Build and test before moving to the next milestone.
@@ -336,13 +347,13 @@ components/i2c_bus/i2c_bus.c
 * the monitor logs the beginning and end of the scan
 * every responding 7-bit address is logged in hexadecimal
 * no connected devices produces a clear warning rather than a crash
-* the OLED and MPU6050 can be detected separately and together
+* connected I2C devices can be detected by address
 * hardware pin definitions remain centralized in `board_config.h`
 
 ### Out of scope
 
 * OLED initialization or drawing
-* MPU6050 initialization or data reading
+* ADXL345 initialization or data reading
 * motion detection
 * animations
 * RTOS application tasks
@@ -353,7 +364,7 @@ components/i2c_bus/i2c_bus.c
 
 ## 12. Manual Exercise
 
-Draw the planned bus on paper. Include the ESP32-C3, OLED, MPU6050, 3.3 V,
+Draw the planned bus on paper. Include the ESP32-C3, OLED, ADXL345, 3.3 V,
 ground, SDA, and SCL. Draw SDA and SCL as shared lines rather than separate
 pairs for each device. Next to each device, write its possible 7-bit addresses.
 
@@ -366,7 +377,7 @@ the choice is reviewed.
 ## 13. Review Questions
 
 1. What different jobs do SDA and SCL perform?
-2. Why can the OLED and MPU6050 use the same two signal wires?
+2. Why can multiple addressed devices use the same two signal wires?
 3. What does ACK mean during an I2C scan?
-4. Why might an MPU6050 appear at `0x69` instead of `0x68`?
-5. Why should the scanner work before OLED or MPU6050 driver code is added?
+4. Why might an ADXL345 appear at `0x1D` instead of `0x53`?
+5. Why should the scanner work before OLED or ADXL345 driver code is added?

@@ -13,7 +13,7 @@ READY
 ```
 
 This milestone will initialize the display, clear it, draw static text, and
-leave that text visible. It will not implement animations, MPU6050 support,
+leave that text visible. It will not implement animations, ADXL345 support,
 RTOS application tasks, or TinyML.
 
 ---
@@ -136,7 +136,7 @@ oled_display
   clears and updates the screen
 ```
 
-Later, MPU6050 can share the same `i2c_bus` without depending on OLED drawing
+Later, ADXL345 can use `i2c_bus` without depending on OLED drawing
 code. Animation logic can call `oled_display` without knowing I2C commands.
 
 ---
@@ -181,7 +181,7 @@ It should not add:
 
 * animation loops
 * motion input
-* MPU6050 code
+* ADXL345 code
 * application-created RTOS tasks
 * queues or events
 * TinyML
@@ -281,7 +281,7 @@ Milestone 3 is complete only when:
 * the image remains stable without resets or I2C errors
 * `main.c` remains small
 * OLED implementation is isolated in `oled_display`
-* no MPU6050, animation, RTOS application task, or TinyML code is added
+* no ADXL345, animation, RTOS application task, or TinyML code is added
 
 ---
 
@@ -350,7 +350,7 @@ docs/03_oled_display.md
 10. Keep `main.c` small.
 11. Build and test on the real OLED.
 12. Do not implement animations.
-13. Do not implement MPU6050 support.
+13. Do not implement ADXL345 support.
 14. Do not add application-created RTOS tasks.
 15. Do not add TinyML or battery logic.
 
@@ -427,3 +427,37 @@ The calculated answer is correct: one full monochrome framebuffer requires
 3. Why does a 128x64 monochrome framebuffer require 1024 bytes?
 4. Why should the framebuffer and font stay private to `oled_display`?
 5. What exact visible result is required before animation work can begin?
+
+---
+
+## 17. Replacement 7-Pin SPI OLED
+
+The original 4-pin I2C OLED was replaced after the I2C version of Milestone 3
+had already passed. The replacement module exposes a 4-wire SPI interface:
+
+```text
+OLED GND -> ESP32-C3 GND
+OLED VDD -> ESP32-C3 3V3
+OLED SCK -> ESP32-C3 GPIO4
+OLED SDA -> ESP32-C3 GPIO10 (SPI MOSI, not I2C SDA)
+OLED RES -> ESP32-C3 GPIO1
+OLED DC  -> ESP32-C3 GPIO3
+OLED CS  -> ESP32-C3 GPIO7
+```
+
+The framebuffer, font, and public `oled_display` API remain unchanged. Only the
+ESP-IDF panel I/O transport changed from I2C to SPI. The `i2c_bus` component is
+retained for the ADXL345 but is not required by the SPI OLED.
+
+Current replacement-display status:
+
+* SPI GPIO mapping: configured in `board_config.h`
+* diagnostic SPI clock: 1 MHz
+* ESP-IDF build: passed
+* assumed controller for controlled test: SSD1306-compatible
+* real startup screen: pending hardware test
+* real animation output: pending hardware test
+
+The first SPI run produced a black screen even though ESP-IDF returned success.
+Unlike I2C, SPI has no ACK. The SPI panel I/O was then corrected so SSD1306
+command parameters are transmitted with D/C low (`dc_low_on_param`).

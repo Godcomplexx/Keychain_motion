@@ -2,12 +2,13 @@
 
 ## Goal
 
-Create a software-only fluid animation before the MPU6050 is available. The
-prototype uses simulated normalized tilt values and renders a moving liquid-like
-blob on the verified 128x64 SSD1306-compatible OLED.
+Create a cellular sand animation whose movement accepts normalized tilt independently
+of the sensor model. The current implementation receives real ADXL345 X/Y
+acceleration and renders 96 uniquely occupied pixel cells on the verified
+128x64 OLED.
 
-This is an early preview of Milestone 6. It does not mark the MPU6050 and motion
-state milestones as completed.
+The ADXL345 raw-data connection is implemented. Motion-state detection remains
+a separate milestone.
 
 ## Architecture
 
@@ -24,8 +25,8 @@ oled_display
   owns pixels, the 1024-byte framebuffer, and OLED transmission
 ```
 
-Later, MPU6050-derived tilt will replace only the temporary values generated in
-`main`. The animation API will remain the same.
+ADXL345-derived tilt now replaces the temporary values previously generated in
+`main`. The animation API remains sensor-independent.
 
 ## Input Contract
 
@@ -54,10 +55,11 @@ model suitable for validating component boundaries and display performance.
 
 ## Timing
 
-The I2C bus remains at the already verified 100 kHz speed. A complete 1024-byte
-frame is the main frame-rate limitation. No new application task is created;
-the prototype runs as a simple loop inside ESP-IDF's existing main task and
-yields briefly after each frame.
+The replacement OLED starts with a conservative 1 MHz diagnostic SPI clock.
+After the display is verified, SPI can be increased and will send the complete
+1024-byte frame faster than the original 100 kHz I2C transport. No new application
+task is created; the prototype runs as a simple loop inside ESP-IDF's existing
+main task and yields briefly after each frame.
 
 ## Files
 
@@ -75,23 +77,23 @@ main/main.c
 
 * the project builds for ESP32-C3
 * the OLED still initializes successfully
-* one connected blob moves smoothly around the screen
+* the 96-particle group moves in response to measured tilt
 * the blob remains inside the visible display area
-* no separate RTOS tasks, queues, MPU6050 code, or TinyML are added
-* simulated input can later be replaced without changing `fluid_animation`
+* no separate RTOS tasks, queues, motion states, or TinyML are added
+* sensor input can be replaced without changing `fluid_animation`
 
 ## Current Test Result
 
 * ESP32-C3 build: passed
 * real OLED rendering: passed
-* continuous simulated movement: passed
+* ADXL345 integration build: passed
+* real ADXL345-controlled movement: hardware test pending
 * visual design approval: not passed
 * decision: keep this as a technical prototype and refine the FLUID appearance
   later
 
 ## Out of Scope
 
-* real accelerometer input
 * shake and stillness detection
 * FLUID/SLEEP/TIME state transitions
 * complex particle or fluid simulation
@@ -105,9 +107,9 @@ main/main.c
 
 ## Manual exercise
 
-Change only the simulated `tilt_y` amplitude in `main.c` from `0.45f` to
-`0.0f`, rebuild, and observe which direction of movement disappears. Restore
-`0.45f` after the test.
+Place the prototype flat and record raw X/Y/Z. Tilt it toward each edge and
+compare the changing axis with particle motion. Do not change axis signs until
+all four directions have been recorded.
 
 ## Review questions
 
@@ -116,4 +118,4 @@ Change only the simulated `tilt_y` amplitude in `main.c` from `0.45f` to
 3. What does damping do?
 4. Why does `fluid_animation` call `oled_display` instead of accessing the
    framebuffer directly?
-5. What code will be replaced when the MPU6050 becomes available?
+5. Why does `fluid_animation` not include `adxl345.h` directly?
