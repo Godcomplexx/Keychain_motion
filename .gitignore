@@ -3,3 +3,7 @@ sdkconfig
 sdkconfig.old
 .vscode/
 .idea/
+android_time_sync/.gradle/
+android_time_sync/build/
+android_time_sync/app/build/
+android_time_sync/local.properties

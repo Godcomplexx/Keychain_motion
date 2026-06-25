@@ -20,4 +20,11 @@ typedef struct {
  */
 esp_err_t flip_animation_prepare(flip_animation_stats_t *stats);
 
+/* Return all FLIP particles to their known startup positions. */
+void flip_animation_reset(void);
+
+/* Advance the FLIP physics and send the resulting frame to the OLED. */
+esp_err_t flip_animation_render(float tilt_x, float tilt_y,
+                                float delta_seconds);
+
 #endif /* FLIP_ANIMATION_H */

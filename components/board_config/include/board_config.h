@@ -4,16 +4,35 @@
 #include "driver/spi_master.h"
 
 /*
+ * OLED transport selection.
+ * Use I2C for the 4-pin SSD1306 module, or SPI for the older 7-pin module.
+ */
+#define BOARD_OLED_TRANSPORT_I2C 1
+#define BOARD_OLED_TRANSPORT_SPI 2
+#define BOARD_OLED_TRANSPORT BOARD_OLED_TRANSPORT_I2C
+
+/*
  * I2C GPIO mapping selected for the ESP32-C3 Super Mini prototype.
+ * The I2C OLED and ADXL345 can share these same SDA/SCL wires.
  * Recheck these values if the development board changes.
  */
 #define BOARD_I2C_SDA_GPIO 5
 #define BOARD_I2C_SCL_GPIO 6
 #define BOARD_I2C_PORT 0
-#define BOARD_I2C_FREQUENCY_HZ 100000
+/* Fast Mode I2C improves OLED framebuffer transfer speed when wiring is short. */
+#define BOARD_I2C_FREQUENCY_HZ 400000
 
 /* Verified with SDO connected to GND on the GY-291 module. */
 #define BOARD_ADXL345_I2C_ADDRESS 0x53
+
+/*
+ * 4-pin I2C SSD1306 OLED wiring.
+ * The common SSD1306 I2C address is 0x3C; confirm it with the scanner.
+ * A 4-pin module normally has no separate reset pin, so reset is disabled.
+ */
+#define BOARD_OLED_I2C_ADDRESS 0x3C
+#define BOARD_OLED_I2C_FREQUENCY_HZ BOARD_I2C_FREQUENCY_HZ
+#define BOARD_OLED_I2C_RESET_GPIO -1
 
 /*
  * SPI OLED wiring selected for the replacement 7-pin module.

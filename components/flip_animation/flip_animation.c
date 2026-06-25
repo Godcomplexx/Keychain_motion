@@ -27,17 +27,18 @@
     ((float)BOARD_OLED_HEIGHT / (float)FLIP_GRID_HEIGHT)
 
 #define FLIP_MIN_FRAME_SECONDS 0.005f
-#define FLIP_MAX_FRAME_SECONDS 0.033f
+#define FLIP_MAX_FRAME_SECONDS 0.050f
 #define FLIP_SUBSTEPS 1
 #define FLIP_PRESSURE_ITERATIONS 8
 #define FLIP_SEPARATION_ITERATIONS 1
 #define FLIP_BLEND_RATIO 0.92f
 #define FLIP_PRESSURE_OVER_RELAXATION 1.70f
 
-#define FLIP_GRAVITY_PIXELS_PER_SECOND_SQUARED 180.0f
+#define FLIP_GRAVITY_PIXELS_PER_SECOND_SQUARED 360.0f
 #define FLIP_PARTICLE_DAMPING 0.998f
-#define FLIP_MAX_SPEED_PIXELS_PER_SECOND 180.0f
-#define FLIP_PARTICLE_MIN_DISTANCE 2.50f
+#define FLIP_MAX_SPEED_PIXELS_PER_SECOND 300.0f
+#define FLIP_PARTICLE_MIN_DISTANCE 4.00f
+#define FLIP_RENDER_RADIUS_PIXELS 5
 #define FLIP_WALL_MARGIN 0.50f
 #define FLIP_WALL_TANGENTIAL_DAMPING 0.82f
 #define FLIP_FULL_INTERPOLATION_WEIGHT 0.999f
@@ -716,6 +717,23 @@ static void log_profile_if_due(void)
     s_profile.started_us = now_us;
 }
 
+static void draw_particle_sprite(int center_x, int center_y)
+{
+    /*
+     * The physics particle is still one coordinate. The radius controls only
+     * how large that coordinate appears on the 1-bit OLED framebuffer.
+     */
+    for (int y = center_y - FLIP_RENDER_RADIUS_PIXELS;
+         y <= center_y + FLIP_RENDER_RADIUS_PIXELS;
+         ++y) {
+        for (int x = center_x - FLIP_RENDER_RADIUS_PIXELS;
+             x <= center_x + FLIP_RENDER_RADIUS_PIXELS;
+             ++x) {
+            oled_display_set_pixel(x, y, true);
+        }
+    }
+}
+
 esp_err_t flip_animation_prepare(flip_animation_stats_t *stats)
 {
     if (s_prepared) {
@@ -792,31 +810,7 @@ esp_err_t flip_animation_render(float tilt_x, float tilt_y,
     for (size_t index = 0; index < FLIP_PARTICLE_COUNT; ++index) {
         const int x = (int)(s_particles[index].x + 0.5f);
         const int y = (int)(s_particles[index].y + 0.5f);
-        oled_display_set_pixel(x - 2, y - 2, true);
-        oled_display_set_pixel(x - 1, y - 2, true);
-        oled_display_set_pixel(x,     y - 2, true);
-        oled_display_set_pixel(x + 1, y - 2, true);
-        oled_display_set_pixel(x + 2, y - 2, true);
-        oled_display_set_pixel(x - 2, y - 1, true);
-        oled_display_set_pixel(x - 1, y - 1, true);
-        oled_display_set_pixel(x,     y - 1, true);
-        oled_display_set_pixel(x + 1, y - 1, true);
-        oled_display_set_pixel(x + 2, y - 1, true);
-        oled_display_set_pixel(x - 2, y,     true);
-        oled_display_set_pixel(x - 1, y,     true);
-        oled_display_set_pixel(x,     y,     true);
-        oled_display_set_pixel(x + 1, y,     true);
-        oled_display_set_pixel(x + 2, y,     true);
-        oled_display_set_pixel(x - 2, y + 1, true);
-        oled_display_set_pixel(x - 1, y + 1, true);
-        oled_display_set_pixel(x,     y + 1, true);
-        oled_display_set_pixel(x + 1, y + 1, true);
-        oled_display_set_pixel(x + 2, y + 1, true);
-        oled_display_set_pixel(x - 2, y + 2, true);
-        oled_display_set_pixel(x - 1, y + 2, true);
-        oled_display_set_pixel(x,     y + 2, true);
-        oled_display_set_pixel(x + 1, y + 2, true);
-        oled_display_set_pixel(x + 2, y + 2, true);
+        draw_particle_sprite(x, y);
     }
     esp_err_t present_err = oled_display_present();
     s_profile.draw_us += esp_timer_get_time() - draw_started_us;

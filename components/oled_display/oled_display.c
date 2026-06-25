@@ -5,7 +5,9 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "driver/i2c_master.h"
 #include "driver/spi_master.h"
+#include "esp_lcd_io_i2c.h"
 #include "esp_lcd_io_spi.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
@@ -14,6 +16,7 @@
 
 #include "board_config.h"
 #include "font_5x7.h"
+#include "i2c_bus.h"
 
 #define OLED_BITS_PER_PIXEL 1
 #define OLED_COMMAND_BITS 8
@@ -23,12 +26,15 @@
 #define FONT_WIDTH 5
 #define FONT_HEIGHT 7
 #define FONT_ADVANCE 6
+#define SSD1306_SET_CONTRAST_COMMAND 0x81
 
 #define OLED_FRAMEBUFFER_SIZE \
     (BOARD_OLED_WIDTH * BOARD_OLED_HEIGHT * OLED_BITS_PER_PIXEL / 8)
 
 static const char *TAG = "oled_display";
+#if BOARD_OLED_TRANSPORT == BOARD_OLED_TRANSPORT_SPI
 static bool s_spi_bus_initialized;
+#endif
 static esp_lcd_panel_io_handle_t s_io_handle;
 static esp_lcd_panel_handle_t s_panel_handle;
 static uint8_t s_framebuffer[OLED_FRAMEBUFFER_SIZE];
@@ -56,6 +62,7 @@ static void oled_display_cleanup(void)
         }
     }
 
+#if BOARD_OLED_TRANSPORT == BOARD_OLED_TRANSPORT_SPI
     if (s_spi_bus_initialized) {
         esp_err_t err = spi_bus_free(BOARD_OLED_SPI_HOST);
         if (err == ESP_OK) {
@@ -65,6 +72,7 @@ static void oled_display_cleanup(void)
                      esp_err_to_name(err));
         }
     }
+#endif
 }
 
 static const uint8_t *font_5x7_find(char character)
@@ -119,7 +127,7 @@ static void framebuffer_draw_character(int x, int y, char character)
     }
 }
 
-static void framebuffer_draw_text(int x, int y, const char *text)
+void oled_display_draw_text(int x, int y, const char *text)
 {
     while (*text != '\0') {
         framebuffer_draw_character(x, y, *text);
@@ -130,11 +138,43 @@ static void framebuffer_draw_text(int x, int y, const char *text)
 
 esp_err_t oled_display_init(void)
 {
-    if (s_spi_bus_initialized || s_panel_handle != NULL ||
-        s_io_handle != NULL) {
+    if (
+#if BOARD_OLED_TRANSPORT == BOARD_OLED_TRANSPORT_SPI
+        s_spi_bus_initialized ||
+#endif
+        s_panel_handle != NULL || s_io_handle != NULL) {
         return ESP_ERR_INVALID_STATE;
     }
 
+#if BOARD_OLED_TRANSPORT == BOARD_OLED_TRANSPORT_I2C
+    i2c_master_bus_handle_t bus_handle = i2c_bus_get_handle();
+    if (bus_handle == NULL) {
+        ESP_LOGE(TAG, "I2C OLED needs i2c_bus_init() to run first");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const esp_lcd_panel_io_i2c_config_t io_config = {
+        .dev_addr = BOARD_OLED_I2C_ADDRESS,
+        .scl_speed_hz = BOARD_OLED_I2C_FREQUENCY_HZ,
+        /*
+         * SSD1306 I2C uses one control byte before commands or data.
+         * Bit 6 selects whether the following byte is a command or data.
+         */
+        .control_phase_bytes = 1,
+        .dc_bit_offset = 6,
+        .lcd_cmd_bits = OLED_COMMAND_BITS,
+        .lcd_param_bits = OLED_PARAMETER_BITS,
+    };
+
+    esp_err_t err = esp_lcd_new_panel_io_i2c(bus_handle,
+                                             &io_config,
+                                             &s_io_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create OLED I2C panel I/O: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+#elif BOARD_OLED_TRANSPORT == BOARD_OLED_TRANSPORT_SPI
     const spi_bus_config_t bus_config = {
         .sclk_io_num = BOARD_OLED_SPI_SCLK_GPIO,
         .mosi_io_num = BOARD_OLED_SPI_MOSI_GPIO,
@@ -175,12 +215,19 @@ esp_err_t oled_display_init(void)
         oled_display_cleanup();
         return err;
     }
+#else
+#error "Unsupported BOARD_OLED_TRANSPORT value"
+#endif
 
     const esp_lcd_panel_ssd1306_config_t ssd1306_config = {
         .height = BOARD_OLED_HEIGHT,
     };
     const esp_lcd_panel_dev_config_t panel_config = {
+#if BOARD_OLED_TRANSPORT == BOARD_OLED_TRANSPORT_I2C
+        .reset_gpio_num = BOARD_OLED_I2C_RESET_GPIO,
+#else
         .reset_gpio_num = BOARD_OLED_SPI_RESET_GPIO,
+#endif
         .bits_per_pixel = OLED_BITS_PER_PIXEL,
         .vendor_config = (void *)&ssd1306_config,
     };
@@ -204,6 +251,14 @@ esp_err_t oled_display_init(void)
         return err;
     }
 
+#if BOARD_OLED_TRANSPORT == BOARD_OLED_TRANSPORT_I2C
+    ESP_LOGI(TAG,
+             "SSD1306-compatible I2C OLED initialized: address=0x%02X, "
+             "SDA=%d, SCL=%d",
+             BOARD_OLED_I2C_ADDRESS,
+             BOARD_I2C_SDA_GPIO,
+             BOARD_I2C_SCL_GPIO);
+#else
     ESP_LOGI(TAG,
              "SSD1306-compatible SPI OLED initialized: SCK=%d, MOSI=%d, "
              "CS=%d, DC=%d, RESET=%d",
@@ -212,6 +267,7 @@ esp_err_t oled_display_init(void)
              BOARD_OLED_SPI_CS_GPIO,
              BOARD_OLED_SPI_DC_GPIO,
              BOARD_OLED_SPI_RESET_GPIO);
+#endif
     return ESP_OK;
 }
 
@@ -222,8 +278,8 @@ esp_err_t oled_display_show_startup(void)
     }
 
     oled_display_clear();
-    framebuffer_draw_text(22, 20, "SMART KEYCHAIN");
-    framebuffer_draw_text(49, 36, "READY");
+    oled_display_draw_text(22, 20, "SMART KEYCHAIN");
+    oled_display_draw_text(49, 36, "READY");
 
     esp_err_t err = oled_display_present();
     if (err == ESP_OK) {
@@ -246,10 +302,25 @@ esp_err_t oled_display_present(void)
                                      s_framebuffer);
 }
 
+esp_err_t oled_display_set_contrast(uint8_t contrast)
+{
+    if (s_io_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    return esp_lcd_panel_io_tx_param(s_io_handle,
+                                     SSD1306_SET_CONTRAST_COMMAND,
+                                     &contrast,
+                                     sizeof(contrast));
+}
+
 esp_err_t oled_display_deinit(void)
 {
-    if (!s_spi_bus_initialized && s_panel_handle == NULL &&
-        s_io_handle == NULL) {
+    if (
+#if BOARD_OLED_TRANSPORT == BOARD_OLED_TRANSPORT_SPI
+        !s_spi_bus_initialized &&
+#endif
+        s_panel_handle == NULL && s_io_handle == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -269,6 +340,7 @@ esp_err_t oled_display_deinit(void)
         s_io_handle = NULL;
     }
 
+#if BOARD_OLED_TRANSPORT == BOARD_OLED_TRANSPORT_SPI
     if (s_spi_bus_initialized) {
         esp_err_t err = spi_bus_free(BOARD_OLED_SPI_HOST);
         if (err != ESP_OK) {
@@ -276,6 +348,7 @@ esp_err_t oled_display_deinit(void)
         }
         s_spi_bus_initialized = false;
     }
+#endif
 
     return ESP_OK;
 }
