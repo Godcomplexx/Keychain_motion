@@ -20,7 +20,13 @@ public class KeychainSyncService extends Service {
     private static final String TAG = "KeychainSyncService";
     private static final String CHANNEL_ID = "keychain_sync";
     private static final int NOTIFICATION_ID = 1001;
-    private static final long AUTO_SYNC_INTERVAL_MS = 60000L;
+    /*
+     * The keychain starts BLE advertising when it opens the TIME screen, so the
+     * phone must scan often enough to answer while that screen is still shown
+     * (TIME lasts about 60 s). A shorter interval makes TIME show fresh time
+     * faster; a longer interval saves phone battery. 15 s is a balance.
+     */
+    private static final long AUTO_SYNC_INTERVAL_MS = 15000L;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private KeychainBleSync bleSync;

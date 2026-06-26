@@ -21,12 +21,26 @@ typedef struct {
     bool has_previous_raw_data;
     int64_t last_movement_us;
     adxl345_raw_data_t previous_raw_data;
+
+    /*
+     * A single jolt should not open the TIME screen. The detector counts
+     * separate shake peaks and only reports shake_detected once enough peaks
+     * happen inside one short window, which requires an intentional repeated
+     * shake gesture.
+     */
+    int shake_count_required;
+    int64_t shake_window_us;
+    int shake_count;
+    int64_t shake_window_start_us;
+    bool was_above_shake_threshold;
 } motion_detector_t;
 
 void motion_detector_init(motion_detector_t *detector,
                           int64_t now_us,
                           int movement_delta_threshold,
                           int shake_delta_threshold,
+                          int shake_count_required,
+                          int64_t shake_window_us,
                           int64_t stillness_timeout_us);
 
 motion_detector_result_t motion_detector_update(motion_detector_t *detector,

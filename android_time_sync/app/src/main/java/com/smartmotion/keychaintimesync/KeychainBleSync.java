@@ -17,8 +17,10 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 
@@ -46,6 +48,8 @@ final class KeychainBleSync {
     private boolean running;
     private boolean scanning;
     private boolean finished;
+    private boolean writeStarted;
+    private boolean discoveryRetried;
 
     private final ScanCallback scanCallback = new ScanCallback() {
         @Override
@@ -84,11 +88,19 @@ final class KeychainBleSync {
                     }
 
                     if (newState == BluetoothProfile.STATE_CONNECTED) {
+                        /*
+                         * Start with normal service discovery. If Android gives
+                         * us a stale GATT table, retry once with a cache refresh
+                         * in onServicesDiscovered().
+                         */
                         log("Connected, discovering services");
-                        gatt.discoverServices();
+                        mainHandler.postDelayed(gatt::discoverServices,
+                                250L);
                     } else if (newState ==
                                BluetoothProfile.STATE_DISCONNECTED) {
-                        log("Disconnected before time write");
+                        log(writeStarted
+                                ? "Disconnected after write request"
+                                : "Disconnected before time write");
                         finish(false);
                     }
                 }
@@ -102,9 +114,16 @@ final class KeychainBleSync {
                         return;
                     }
 
+                    log("Services discovered: " + gatt.getServices().size());
+
                     BluetoothGattService service =
                             gatt.getService(TIME_SERVICE_UUID);
                     if (service == null) {
+                        if (retryServiceDiscovery(gatt,
+                                "Exact time service not found")) {
+                            return;
+                        }
+
                         log("Exact time service not found");
                         logDiscoveredServices(gatt);
                         finish(false);
@@ -115,6 +134,11 @@ final class KeychainBleSync {
                             service.getCharacteristic(
                                     TIME_CHARACTERISTIC_UUID);
                     if (characteristic == null) {
+                        if (retryServiceDiscovery(gatt,
+                                "Exact time characteristic not found")) {
+                            return;
+                        }
+
                         log("Exact time characteristic not found");
                         logDiscoveredServices(gatt);
                         finish(false);
@@ -131,8 +155,8 @@ final class KeychainBleSync {
                         BluetoothGattCharacteristic characteristic,
                         int status) {
                     if (status == BluetoothGatt.GATT_SUCCESS) {
-                        log("Time sent successfully");
-                        finish(true);
+                        log("Time write acknowledged by Android");
+                        mainHandler.postDelayed(() -> finish(true), 500L);
                     } else {
                         log("Write failed: " + status);
                         finish(false);
@@ -178,6 +202,8 @@ final class KeychainBleSync {
         running = true;
         finished = false;
         scanning = true;
+        writeStarted = false;
+        discoveryRetried = false;
         log("Scanning for " + DEVICE_NAME);
         scanner.startScan(scanCallback);
         mainHandler.postDelayed(() -> {
@@ -204,14 +230,43 @@ final class KeychainBleSync {
                                   BluetoothDevice.TRANSPORT_LE);
     }
 
+    private void refreshGattCache(BluetoothGatt gatt) {
+        try {
+            Method refresh = gatt.getClass().getMethod("refresh");
+            boolean refreshed = (Boolean) refresh.invoke(gatt);
+            log(refreshed ? "GATT cache refresh requested" :
+                    "GATT cache refresh was not accepted");
+        } catch (ReflectiveOperationException | ClassCastException error) {
+            log("GATT cache refresh unavailable");
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private boolean retryServiceDiscovery(BluetoothGatt gatt,
+                                          String reason) {
+        if (discoveryRetried) {
+            return false;
+        }
+
+        discoveryRetried = true;
+        log(reason + ", refreshing GATT cache and retrying discovery");
+        refreshGattCache(gatt);
+        mainHandler.postDelayed(gatt::discoverServices, 800L);
+        return true;
+    }
+
     @SuppressLint("MissingPermission")
     private void writeCurrentTime(BluetoothGatt gatt,
                                   BluetoothGattCharacteristic characteristic) {
-        String text = LocalDateTime.now()
-                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        ZonedDateTime phoneTime = ZonedDateTime.now();
+        LocalDateTime localPhoneTime = phoneTime.toLocalDateTime();
+        String text = localPhoneTime.format(
+                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
         byte[] value = text.getBytes(StandardCharsets.UTF_8);
 
-        log("Writing " + text);
+        log("Writing local phone time " + text +
+                " zone=" + phoneTime.getZone() +
+                " offset=" + phoneTime.getOffset());
         log("Characteristic " + characteristic.getUuid());
 
         characteristic.setWriteType(
@@ -231,7 +286,11 @@ final class KeychainBleSync {
         if (!started) {
             log("Write could not start");
             finish(false);
+            return;
         }
+
+        writeStarted = true;
+        log("Write request started");
     }
 
     @SuppressLint("MissingPermission")

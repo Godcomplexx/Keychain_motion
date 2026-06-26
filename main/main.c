@@ -20,20 +20,55 @@
 #include "step_counter.h"
 #include "time_animation.h"
 
-#define ACTIVE_FRAME_DELAY_MS 5
+/*
+ * FLUID is the default active state, so its loop rate dominates average power.
+ * The delay between FLUID frames caps the animation rate to roughly 25-30 FPS
+ * instead of running as fast as the CPU/I2C allow. The exact FPS and current
+ * still depend on the real framebuffer transfer time and MUST be measured on
+ * hardware (see docs/07_power_and_battery.md, P0). The value is kept well below
+ * the FLIP physics clamp (FLIP_MAX_FRAME_SECONDS = 50 ms) so physics stays
+ * stable even if a frame takes longer than expected.
+ */
+/*
+ * The current prototype uses an I2C OLED. A full 128x64 framebuffer is about
+ * 1 KB, so refreshing too often makes the breadboard bus much easier to upset.
+ * Keep FLUID deliberately slow until the display wiring is stable.
+ */
+#define ACTIVE_FRAME_DELAY_MS 200
 #define STARTUP_SCREEN_DELAY_MS 1000
 #define MICROSECONDS_PER_SECOND 1000000.0f
-#define RAW_LOG_INTERVAL_FRAMES 25
+/*
+ * Logging every frame wastes CPU and UART time in normal battery operation.
+ * At ~30 FPS in FLUID this logs roughly once every few seconds, which is enough
+ * to confirm behavior without dominating the loop.
+ */
+#define RAW_LOG_INTERVAL_FRAMES 200
 #define SLEEP_STILLNESS_TIMEOUT_US 60000000
 #define SLEEP_FRAME_INTERVAL_US 300000
-#define TIME_FRAME_INTERVAL_US 250000
+/*
+ * The TIME screen only shows whole seconds, so refreshing it four times per
+ * second just sent the same 1 KB framebuffer over I2C three extra times. Once
+ * per second keeps the clock correct while cutting TIME-state display traffic
+ * by about 4x. The progress bar still advances smoothly enough at 1 Hz.
+ */
+#define TIME_FRAME_INTERVAL_US 1000000
 #define TIME_STATE_DURATION_US 60000000
 #define LOW_POWER_SENSOR_READ_INTERVAL_US 150000
 #define LOW_POWER_LOOP_DELAY_MS 50
 #define MOTION_MOVEMENT_DELTA_THRESHOLD 80
-#define MOTION_SHAKE_DELTA_THRESHOLD 500
+#define MOTION_SHAKE_DELTA_THRESHOLD 350
+/*
+ * TIME should open only on an intentional gesture, not on a single accidental
+ * bump. Require two shake peaks within a short window before entering TIME;
+ * the prototype logs showed real hand shakes around delta=411, so the previous
+ * threshold of 500 was too strict.
+ */
+#define MOTION_SHAKE_COUNT_REQUIRED 2
+#define MOTION_SHAKE_WINDOW_US 2500000
 #define OLED_ACTIVE_CONTRAST 0xCF
 #define OLED_IDLE_CONTRAST 0x18
+#define DISPLAY_RENDER_FAILURE_LIMIT 5
+#define DISPLAY_RENDER_RECOVERY_DELAY_MS 250
 
 static const char *TAG = "keychain";
 
@@ -76,6 +111,7 @@ static esp_err_t render_time_frame_if_due(int64_t now_us,
         .minute = datetime.minute,
         .second = datetime.second,
         .steps_today = step_counter_get_steps_today(step_counter),
+        .clock_synced = device_clock_has_phone_sync(device_clock),
     };
 
     *previous_time_frame_us = now_us;
@@ -137,6 +173,36 @@ static motion_event_t detector_result_to_event(
     }
 
     return MOTION_EVENT_NONE;
+}
+
+static bool display_render_succeeded_or_deferred(const char *label,
+                                                 esp_err_t err,
+                                                 uint8_t *failure_count)
+{
+    if (err == ESP_OK) {
+        *failure_count = 0;
+        return true;
+    }
+
+    ++(*failure_count);
+    if (*failure_count >= DISPLAY_RENDER_FAILURE_LIMIT) {
+        ESP_LOGE(TAG,
+                 "%s rendering failed %u times, keeping app alive for BLE/time sync: %s",
+                 label,
+                 (unsigned int)*failure_count,
+                 esp_err_to_name(err));
+        *failure_count = 0;
+    } else {
+        ESP_LOGW(TAG,
+                 "%s rendering failed, will retry next loop (%u/%u): %s",
+                 label,
+                 (unsigned int)*failure_count,
+                 (unsigned int)DISPLAY_RENDER_FAILURE_LIMIT,
+                 esp_err_to_name(err));
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(DISPLAY_RENDER_RECOVERY_DELAY_MS));
+    return false;
 }
 
 void app_main(void)
@@ -215,6 +281,7 @@ void app_main(void)
     motion_detector_t motion_detector;
     motion_state_machine_t motion_state;
     step_counter_t step_counter;
+    uint8_t display_render_failure_count = 0;
 
     device_clock_init(&device_clock, previous_frame_us);
     device_clock_datetime_t datetime;
@@ -230,6 +297,8 @@ void app_main(void)
                          previous_frame_us,
                          MOTION_MOVEMENT_DELTA_THRESHOLD,
                          MOTION_SHAKE_DELTA_THRESHOLD,
+                         MOTION_SHAKE_COUNT_REQUIRED,
+                         MOTION_SHAKE_WINDOW_US,
                          SLEEP_STILLNESS_TIMEOUT_US);
     motion_state_init(&motion_state, previous_frame_us);
 
@@ -305,6 +374,16 @@ void app_main(void)
             if (err != ESP_OK) {
                 break;
             }
+
+            /*
+             * TIME is over. If the clock is already fresh, stop any BLE
+             * advertising that the shake started so we do not keep the radio
+             * on. If the clock is still stale, the stale check at the top of
+             * the loop keeps advertising until a sync succeeds.
+             */
+            if (!device_clock_is_stale(&device_clock, current_frame_us)) {
+                phone_sync_stop_advertising();
+            }
         }
 
         if ((current_state == MOTION_STATE_SLEEP ||
@@ -325,10 +404,11 @@ void app_main(void)
             }
 
             if (err != ESP_OK) {
-                ESP_LOGE(TAG, "%s rendering failed: %s",
-                         motion_state_name(current_state),
-                         esp_err_to_name(err));
-                break;
+                (void)display_render_succeeded_or_deferred(
+                    motion_state_name(current_state),
+                    err,
+                    &display_render_failure_count);
+                continue;
             }
 
             vTaskDelay(pdMS_TO_TICKS(LOW_POWER_LOOP_DELAY_MS));
@@ -377,6 +457,18 @@ void app_main(void)
                     break;
                 }
             }
+
+            /*
+             * A shake opens TIME, so ask the phone for the current time before
+             * the screen is useful. BLE advertising lets the companion app
+             * connect and write fresh time; the screen then updates from the
+             * synced clock. The request is a no-op if already advertising.
+             */
+            if (event == MOTION_EVENT_SHAKE_DETECTED &&
+                current_state == MOTION_STATE_TIME) {
+                phone_sync_request_advertising();
+                ESP_LOGI(TAG, "Requesting phone time for TIME screen");
+            }
         }
 
         const float tilt_x = adxl345_raw_to_g(raw_data.x);
@@ -403,9 +495,11 @@ void app_main(void)
         case MOTION_STATE_FLUID:
             err = flip_animation_render(tilt_x, tilt_y, frame_seconds);
             if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Particle rendering failed: %s",
-                         esp_err_to_name(err));
-                break;
+                (void)display_render_succeeded_or_deferred(
+                    "Particle",
+                    err,
+                    &display_render_failure_count);
+                continue;
             }
             vTaskDelay(pdMS_TO_TICKS(ACTIVE_FRAME_DELAY_MS));
             break;
@@ -415,9 +509,11 @@ void app_main(void)
                                             &previous_sleep_frame_us,
                                             &sleep_frame_index);
             if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Sleep rendering failed: %s",
-                         esp_err_to_name(err));
-                break;
+                (void)display_render_succeeded_or_deferred(
+                    "Sleep",
+                    err,
+                    &display_render_failure_count);
+                continue;
             }
             vTaskDelay(pdMS_TO_TICKS(LOW_POWER_LOOP_DELAY_MS));
             break;
@@ -430,9 +526,11 @@ void app_main(void)
                 &device_clock,
                 &step_counter);
             if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Time rendering failed: %s",
-                         esp_err_to_name(err));
-                break;
+                (void)display_render_succeeded_or_deferred(
+                    "Time",
+                    err,
+                    &display_render_failure_count);
+                continue;
             }
             vTaskDelay(pdMS_TO_TICKS(LOW_POWER_LOOP_DELAY_MS));
             break;

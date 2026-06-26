@@ -20,6 +20,8 @@ void motion_detector_init(motion_detector_t *detector,
                           int64_t now_us,
                           int movement_delta_threshold,
                           int shake_delta_threshold,
+                          int shake_count_required,
+                          int64_t shake_window_us,
                           int64_t stillness_timeout_us)
 {
     if (detector == NULL) {
@@ -32,6 +34,14 @@ void motion_detector_init(motion_detector_t *detector,
     detector->has_previous_raw_data = false;
     detector->last_movement_us = now_us;
     detector->previous_raw_data = (adxl345_raw_data_t){0};
+
+    /* At least one peak is always required, even if the caller passes 0. */
+    detector->shake_count_required =
+        shake_count_required > 0 ? shake_count_required : 1;
+    detector->shake_window_us = shake_window_us;
+    detector->shake_count = 0;
+    detector->shake_window_start_us = now_us;
+    detector->was_above_shake_threshold = false;
 }
 
 motion_detector_result_t motion_detector_update(motion_detector_t *detector,
@@ -55,8 +65,32 @@ motion_detector_result_t motion_detector_update(motion_detector_t *detector,
     result.raw_delta = raw_motion_delta(data, &detector->previous_raw_data);
     result.movement_detected =
         result.raw_delta > detector->movement_delta_threshold;
-    result.shake_detected =
+
+    /*
+     * Count one shake per rising edge (the frame where the delta first crosses
+     * the shake threshold). A single sustained jolt stays above the threshold
+     * for several frames but counts only once, while an intentional repeated
+     * shake produces a new peak for each swing.
+     */
+    const bool above_shake_threshold =
         result.raw_delta > detector->shake_delta_threshold;
+    if (above_shake_threshold && !detector->was_above_shake_threshold) {
+        /* Start a fresh window if there were no recent peaks or it expired. */
+        if (detector->shake_count == 0 ||
+            now_us - detector->shake_window_start_us >
+                detector->shake_window_us) {
+            detector->shake_count = 0;
+            detector->shake_window_start_us = now_us;
+        }
+
+        ++detector->shake_count;
+        if (detector->shake_count >= detector->shake_count_required) {
+            result.shake_detected = true;
+            /* Require a brand new gesture before the next TIME trigger. */
+            detector->shake_count = 0;
+        }
+    }
+    detector->was_above_shake_threshold = above_shake_threshold;
 
     if (result.movement_detected) {
         detector->last_movement_us = now_us;

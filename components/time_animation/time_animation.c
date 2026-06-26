@@ -13,9 +13,11 @@
 #define TIME_TEXT_X 21
 #define DATE_TEXT_X 21
 #define STEPS_TEXT_X 21
+#define STATUS_TEXT_X 52
 #define TIME_TEXT_Y 12
 #define DATE_TEXT_Y 28
 #define STEPS_TEXT_Y 43
+#define STATUS_TEXT_Y 0
 
 static unsigned int clamp_to_two_digits(uint8_t value)
 {
@@ -112,6 +114,13 @@ esp_err_t time_animation_render(const time_animation_view_t *view,
              (unsigned long)view->steps_today);
 
     oled_display_clear();
+
+    /*
+     * NO means the screen is still using the firmware fallback clock.
+     * OK means a phone time write was accepted and applied.
+     */
+    oled_display_draw_text(STATUS_TEXT_X, STATUS_TEXT_Y,
+                           view->clock_synced ? "OK" : "NO");
 
     /* TIME state MVP: software clock plus approximate daily step count. */
     oled_display_draw_text(TIME_TEXT_X, TIME_TEXT_Y, time_text);

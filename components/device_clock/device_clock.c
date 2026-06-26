@@ -200,6 +200,11 @@ bool device_clock_is_stale(const device_clock_t *clock, int64_t now_us)
            DEVICE_CLOCK_SYNC_MAX_AGE_US;
 }
 
+bool device_clock_has_phone_sync(const device_clock_t *clock)
+{
+    return clock != NULL && clock->has_phone_sync;
+}
+
 uint32_t device_clock_date_key(const device_clock_datetime_t *datetime)
 {
     if (datetime == NULL) {

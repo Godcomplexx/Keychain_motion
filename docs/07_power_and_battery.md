@@ -49,18 +49,26 @@ about 4.5-6 hours realistic
 
 ### P1 - Keep Features, Reduce Display Cost
 
-- [ ] Lower OLED contrast in `SLEEP`.
-- [ ] Keep `SLEEP` animation at low FPS.
+- [x] Lower OLED contrast in `SLEEP`. (`OLED_IDLE_CONTRAST 0x18` in `main.c`)
+- [x] Keep `SLEEP` animation at low FPS. (`SLEEP_FRAME_INTERVAL_US` ~3.3 FPS)
 - [ ] Add a longer-stillness mode that turns OLED off but keeps wake behavior.
-- [ ] Keep `TIME` screen duration limited.
-- [ ] Avoid unnecessary full-screen refreshes when content has not changed.
+- [x] Keep `TIME` screen duration limited. (`TIME_STATE_DURATION_US` = 60 s)
+- [x] Avoid unnecessary full-screen refreshes when content has not changed.
+      `TIME_FRAME_INTERVAL_US` raised from 250 ms to 1000 ms so the TIME screen
+      is redrawn once per visible second instead of 4x, cutting TIME-state I2C
+      framebuffer transfers by ~4x.
 
 ### P2 - Reduce CPU Work
 
-- [ ] Cap `FLUID` animation FPS to a measured target.
+- [x] Cap `FLUID` animation FPS to a measured target. `ACTIVE_FRAME_DELAY_MS`
+      raised from 5 ms to 20 ms, targeting roughly 25-30 FPS. Kept below the
+      FLIP physics clamp (`FLIP_MAX_FRAME_SECONDS` = 50 ms) so physics stays
+      stable. The actual FPS/current still need a hardware measurement (P0).
 - [ ] Reduce CPU work in `SLEEP` and `TIME`.
 - [ ] Measure FLIP frame time after each tuning change.
-- [ ] Avoid logging too often in normal battery builds.
+- [x] Avoid logging too often in normal battery builds. `RAW_LOG_INTERVAL_FRAMES`
+      raised from 25 to 200 so the per-frame status log fires roughly once every
+      few seconds in FLUID instead of about once per second.
 
 ### P3 - Reduce BLE Cost
 

@@ -48,20 +48,23 @@ static int time_access(uint16_t conn_handle,
                        struct ble_gatt_access_ctxt *ctxt,
                        void *arg);
 
+static const struct ble_gatt_chr_def s_time_characteristics[] = {
+    {
+        .uuid = &s_phone_sync_time_uuid.u,
+        .access_cb = time_access,
+        .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+        .val_handle = &s_time_chr_handle,
+    },
+    {
+        0,
+    },
+};
+
 static const struct ble_gatt_svc_def s_services[] = {
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = &s_phone_sync_service_uuid.u,
-        .characteristics = (struct ble_gatt_chr_def[])
-        { {
-                .uuid = &s_phone_sync_time_uuid.u,
-                .access_cb = time_access,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
-                .val_handle = &s_time_chr_handle,
-            }, {
-                0,
-            }
-        },
+        .characteristics = s_time_characteristics,
     },
     {
         0,
@@ -154,6 +157,18 @@ static int start_advertising_if_needed(void)
         return rc;
     }
 
+    struct ble_hs_adv_fields response_fields;
+    memset(&response_fields, 0, sizeof(response_fields));
+    response_fields.uuids128 = &s_phone_sync_service_uuid;
+    response_fields.num_uuids128 = 1;
+    response_fields.uuids128_is_complete = 1;
+
+    rc = ble_gap_adv_rsp_set_fields(&response_fields);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "BLE scan response fields failed: rc=%d", rc);
+        return rc;
+    }
+
     struct ble_gap_adv_params params;
     memset(&params, 0, sizeof(params));
     params.conn_mode = BLE_GAP_CONN_MODE_UND;
@@ -191,7 +206,8 @@ static int gap_event(struct ble_gap_event *event, void *arg)
 
     case BLE_GAP_EVENT_DISCONNECT:
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
-        ESP_LOGI(TAG, "Phone disconnected");
+        ESP_LOGI(TAG, "Phone disconnected: reason=%d",
+                 event->disconnect.reason);
         start_advertising_if_needed();
         return 0;
 
@@ -211,6 +227,7 @@ static int time_access(uint16_t conn_handle,
 {
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
         const char help[] = "write YYYY-MM-DD HH:MM:SS";
+        ESP_LOGI(TAG, "Phone read time characteristic");
         const int rc = os_mbuf_append(ctxt->om,
                                       help,
                                       sizeof(help) - 1U);
@@ -229,6 +246,9 @@ static int time_access(uint16_t conn_handle,
         }
 
         text[length] = '\0';
+        ESP_LOGI(TAG, "Phone write attempt: len=%u, text=%s",
+                 (unsigned int)length,
+                 text);
 
         device_clock_datetime_t datetime;
         if (!parse_datetime_text(text, &datetime)) {
@@ -306,8 +326,11 @@ esp_err_t phone_sync_init(void)
     }
     rc = ble_gatts_add_svcs(s_services);
     if (rc != 0) {
+        ESP_LOGE(TAG, "BLE GATT service add failed: rc=%d", rc);
         return ESP_FAIL;
     }
+
+    ESP_LOGI(TAG, "BLE GATT time service registered");
 
     rc = ble_svc_gap_device_name_set(PHONE_SYNC_DEVICE_NAME);
     if (rc != 0) {

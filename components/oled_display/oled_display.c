@@ -13,6 +13,8 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_ssd1306.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "board_config.h"
 #include "font_5x7.h"
@@ -27,6 +29,7 @@
 #define FONT_HEIGHT 7
 #define FONT_ADVANCE 6
 #define SSD1306_SET_CONTRAST_COMMAND 0x81
+#define OLED_PRESENT_RETRY_DELAY_MS 10
 
 #define OLED_FRAMEBUFFER_SIZE \
     (BOARD_OLED_WIDTH * BOARD_OLED_HEIGHT * OLED_BITS_PER_PIXEL / 8)
@@ -294,6 +297,24 @@ esp_err_t oled_display_present(void)
     if (s_panel_handle == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
+
+    esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel_handle,
+                                              0, 0,
+                                              BOARD_OLED_WIDTH,
+                                              BOARD_OLED_HEIGHT,
+                                              s_framebuffer);
+    if (err == ESP_OK) {
+        return ESP_OK;
+    }
+
+    /*
+     * A long OLED framebuffer transfer can occasionally lose an ACK on
+     * breadboard wiring. Retry once so one bad I2C transaction does not stop
+     * the whole application.
+     */
+    ESP_LOGW(TAG, "OLED present failed, retrying once: %s",
+             esp_err_to_name(err));
+    vTaskDelay(pdMS_TO_TICKS(OLED_PRESENT_RETRY_DELAY_MS));
 
     return esp_lcd_panel_draw_bitmap(s_panel_handle,
                                      0, 0,

@@ -19,8 +19,12 @@
 #define BOARD_I2C_SDA_GPIO 5
 #define BOARD_I2C_SCL_GPIO 6
 #define BOARD_I2C_PORT 0
-/* Fast Mode I2C improves OLED framebuffer transfer speed when wiring is short. */
-#define BOARD_I2C_FREQUENCY_HZ 400000
+/*
+ * Use standard-mode I2C for the breadboard prototype.
+ * The OLED sends full 1024-byte frames, and the current wiring has shown
+ * occasional NACK errors at 400 kHz.
+ */
+#define BOARD_I2C_FREQUENCY_HZ 100000
 
 /* Verified with SDO connected to GND on the GY-291 module. */
 #define BOARD_ADXL345_I2C_ADDRESS 0x53

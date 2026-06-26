@@ -32,6 +32,8 @@ void device_clock_set_datetime(device_clock_t *clock,
 
 bool device_clock_is_stale(const device_clock_t *clock, int64_t now_us);
 
+bool device_clock_has_phone_sync(const device_clock_t *clock);
+
 uint32_t device_clock_date_key(const device_clock_datetime_t *datetime);
 
 #endif /* DEVICE_CLOCK_H */
