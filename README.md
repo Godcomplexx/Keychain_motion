@@ -26,6 +26,14 @@ shows useful information, and turns into a miniature motion-controlled game.
 | **Companion app** | Android 8.0+ |
 | **Display** | 0.96-inch 128x64 OLED |
 
+## Why I Built This
+
+This project started as a personal device idea: a keychain that feels less like
+a utility and more like a tiny digital object with its own behavior. I used it
+to explore embedded firmware architecture, motion sensing, BLE communication,
+low-power design, Android integration, and early product prototyping in one
+connected system.
+
 ## Highlights
 
 - Motion-reactive `FLUID` particle animation.
@@ -58,8 +66,6 @@ keychain does not advertise, reducing unnecessary radio use.
 - MPU-6050 accelerometer/gyroscope module.
 - Single-cell 3.7 V LiPo battery.
 - Protected charger and regulated power converter.
-
-![SmartMotion Keychain concept render](docs/assets/prototype.webp)
 
 The OLED and MPU-6050 share one 200 kHz I2C bus:
 
@@ -119,6 +125,16 @@ main state machine
 The complete execution model, BLE command flow, and design invariants are in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Gallery
+
+| Motion demo | Concept render |
+|---|---|
+| <img src="docs/assets/demo.gif" alt="SmartMotion Keychain motion demo" width="360"> | <img src="docs/assets/prototype.webp" alt="SmartMotion Keychain concept render" width="360"> |
+
+The current media shows the interaction concept and enclosure direction.
+Photographs of the assembled electronics will be added after enclosure
+integration.
+
 ## Quick Start
 
 ### Requirements
@@ -130,8 +146,8 @@ The complete execution model, BLE command flow, and design invariants are in
 ### Build and Flash
 
 ```powershell
-git clone https://github.com/Godcomplexx/SmartMotion_Keychain.git
-cd SmartMotion_Keychain
+git clone https://github.com/Godcomplexx/Keychain_motion.git
+cd Keychain_motion
 
 . $env:IDF_PATH\export.ps1
 idf.py set-target esp32c3
