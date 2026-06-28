@@ -11,20 +11,28 @@ import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanResult;
+import android.bluetooth.le.ScanSettings;
 import android.content.Context;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Collections;
 import java.util.UUID;
 
 final class KeychainBleSync {
+    private enum Operation {
+        TIME_SYNC,
+        START_GAME
+    }
+
     interface Listener {
         void onLog(String message);
 
@@ -33,7 +41,12 @@ final class KeychainBleSync {
 
     static final String DEVICE_NAME = "KeychainSync";
 
-    private static final long SCAN_TIMEOUT_MS = 15000L;
+    private static final long TIME_SCAN_TIMEOUT_MS = 12000L;
+    private static final long TIME_OPERATION_TIMEOUT_MS = 25000L;
+    private static final long BACKGROUND_SCAN_TIMEOUT_MS = 30000L;
+    private static final long BACKGROUND_OPERATION_TIMEOUT_MS = 35000L;
+    private static final long GAME_SCAN_TIMEOUT_MS = 60000L;
+    private static final long GAME_OPERATION_TIMEOUT_MS = 70000L;
     private static final UUID TIME_SERVICE_UUID =
             UUID.fromString("11223344-5566-7788-9a49-315b10371342");
     private static final UUID TIME_CHARACTERISTIC_UUID =
@@ -49,7 +62,9 @@ final class KeychainBleSync {
     private boolean scanning;
     private boolean finished;
     private boolean writeStarted;
-    private boolean discoveryRetried;
+    private int attemptId;
+    private Operation operation = Operation.TIME_SYNC;
+    private boolean lowPowerScan;
 
     private final ScanCallback scanCallback = new ScanCallback() {
         @Override
@@ -88,11 +103,6 @@ final class KeychainBleSync {
                     }
 
                     if (newState == BluetoothProfile.STATE_CONNECTED) {
-                        /*
-                         * Start with normal service discovery. If Android gives
-                         * us a stale GATT table, retry once with a cache refresh
-                         * in onServicesDiscovered().
-                         */
                         log("Connected, discovering services");
                         mainHandler.postDelayed(gatt::discoverServices,
                                 250L);
@@ -100,7 +110,7 @@ final class KeychainBleSync {
                                BluetoothProfile.STATE_DISCONNECTED) {
                         log(writeStarted
                                 ? "Disconnected after write request"
-                                : "Disconnected before time write");
+                                : "Disconnected before command write");
                         finish(false);
                     }
                 }
@@ -116,37 +126,17 @@ final class KeychainBleSync {
 
                     log("Services discovered: " + gatt.getServices().size());
 
-                    BluetoothGattService service =
-                            gatt.getService(TIME_SERVICE_UUID);
-                    if (service == null) {
-                        if (retryServiceDiscovery(gatt,
-                                "Exact time service not found")) {
-                            return;
-                        }
-
-                        log("Exact time service not found");
-                        logDiscoveredServices(gatt);
-                        finish(false);
-                        return;
-                    }
-
                     BluetoothGattCharacteristic characteristic =
-                            service.getCharacteristic(
-                                    TIME_CHARACTERISTIC_UUID);
+                            findCommandCharacteristic(gatt);
                     if (characteristic == null) {
-                        if (retryServiceDiscovery(gatt,
-                                "Exact time characteristic not found")) {
-                            return;
-                        }
-
-                        log("Exact time characteristic not found");
+                        log("Writable command characteristic not found");
                         logDiscoveredServices(gatt);
                         finish(false);
                         return;
                     }
 
-                    log("Exact time characteristic found");
-                    writeCurrentTime(gatt, characteristic);
+                    log("Exact command characteristic found");
+                    writePayload(gatt, characteristic);
                 }
 
                 @Override
@@ -155,7 +145,9 @@ final class KeychainBleSync {
                         BluetoothGattCharacteristic characteristic,
                         int status) {
                     if (status == BluetoothGatt.GATT_SUCCESS) {
-                        log("Time write acknowledged by Android");
+                        log(operation == Operation.START_GAME
+                                ? "Game command acknowledged by Android"
+                                : "Time write acknowledged by Android");
                         mainHandler.postDelayed(() -> finish(true), 500L);
                     } else {
                         log("Write failed: " + status);
@@ -171,6 +163,22 @@ final class KeychainBleSync {
 
     @SuppressLint("MissingPermission")
     void start() {
+        startOperation(Operation.TIME_SYNC, false);
+    }
+
+    @SuppressLint("MissingPermission")
+    void startBackgroundSync() {
+        startOperation(Operation.TIME_SYNC, true);
+    }
+
+    @SuppressLint("MissingPermission")
+    void startGame() {
+        startOperation(Operation.START_GAME, false);
+    }
+
+    @SuppressLint("MissingPermission")
+    private void startOperation(Operation requestedOperation,
+                                boolean requestedLowPowerScan) {
         if (running) {
             log("Sync already running");
             return;
@@ -203,15 +211,47 @@ final class KeychainBleSync {
         finished = false;
         scanning = true;
         writeStarted = false;
-        discoveryRetried = false;
-        log("Scanning for " + DEVICE_NAME);
-        scanner.startScan(scanCallback);
+        operation = requestedOperation;
+        lowPowerScan = requestedLowPowerScan;
+        int currentAttemptId = ++attemptId;
+        log((operation == Operation.START_GAME
+                ? "Scanning to start Breakout on "
+                : "Scanning for ") + DEVICE_NAME);
+
+        ScanFilter nameFilter = new ScanFilter.Builder()
+                .setDeviceName(DEVICE_NAME)
+                .build();
+        ScanSettings settings = new ScanSettings.Builder()
+                .setScanMode(lowPowerScan
+                        ? ScanSettings.SCAN_MODE_LOW_POWER
+                        : ScanSettings.SCAN_MODE_BALANCED)
+                .build();
+        scanner.startScan(Collections.singletonList(nameFilter),
+                          settings,
+                          scanCallback);
+        long scanTimeoutMs = lowPowerScan
+                ? BACKGROUND_SCAN_TIMEOUT_MS
+                : (operation == Operation.START_GAME
+                        ? GAME_SCAN_TIMEOUT_MS
+                        : TIME_SCAN_TIMEOUT_MS);
+        long operationTimeoutMs = lowPowerScan
+                ? BACKGROUND_OPERATION_TIMEOUT_MS
+                : (operation == Operation.START_GAME
+                        ? GAME_OPERATION_TIMEOUT_MS
+                        : TIME_OPERATION_TIMEOUT_MS);
         mainHandler.postDelayed(() -> {
-            if (scanning && !finished) {
+            if (attemptId == currentAttemptId &&
+                scanning && !finished) {
                 log("Scan timeout");
                 finish(false);
             }
-        }, SCAN_TIMEOUT_MS);
+        }, scanTimeoutMs);
+        mainHandler.postDelayed(() -> {
+            if (attemptId == currentAttemptId && !finished) {
+                log("BLE operation timeout");
+                finish(false);
+            }
+        }, operationTimeoutMs);
     }
 
     void cancel() {
@@ -230,43 +270,76 @@ final class KeychainBleSync {
                                   BluetoothDevice.TRANSPORT_LE);
     }
 
-    private void refreshGattCache(BluetoothGatt gatt) {
-        try {
-            Method refresh = gatt.getClass().getMethod("refresh");
-            boolean refreshed = (Boolean) refresh.invoke(gatt);
-            log(refreshed ? "GATT cache refresh requested" :
-                    "GATT cache refresh was not accepted");
-        } catch (ReflectiveOperationException | ClassCastException error) {
-            log("GATT cache refresh unavailable");
+    private BluetoothGattCharacteristic findCommandCharacteristic(
+            BluetoothGatt gatt) {
+        BluetoothGattService exactService =
+                gatt.getService(TIME_SERVICE_UUID);
+        if (exactService != null) {
+            BluetoothGattCharacteristic exactCharacteristic =
+                    exactService.getCharacteristic(
+                            TIME_CHARACTERISTIC_UUID);
+            if (exactCharacteristic != null) {
+                return exactCharacteristic;
+            }
         }
+
+        List<BluetoothGattService> services = gatt.getServices();
+        for (BluetoothGattService service : services) {
+            for (BluetoothGattCharacteristic characteristic :
+                    service.getCharacteristics()) {
+                if (TIME_CHARACTERISTIC_UUID.equals(
+                        characteristic.getUuid())) {
+                    log("Command characteristic found under cached service UUID "
+                            + service.getUuid());
+                    return characteristic;
+                }
+            }
+        }
+
+        for (BluetoothGattService service : services) {
+            if (isStandardGattService(service.getUuid())) {
+                continue;
+            }
+            for (BluetoothGattCharacteristic characteristic :
+                    service.getCharacteristics()) {
+                int properties = characteristic.getProperties();
+                if ((properties &
+                        (BluetoothGattCharacteristic.PROPERTY_WRITE |
+                         BluetoothGattCharacteristic
+                                 .PROPERTY_WRITE_NO_RESPONSE)) != 0) {
+                    log("Using writable characteristic fallback "
+                            + characteristic.getUuid());
+                    return characteristic;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isStandardGattService(UUID uuid) {
+        String value = uuid.toString();
+        return value.startsWith("00001800-") ||
+               value.startsWith("00001801-");
     }
 
     @SuppressLint("MissingPermission")
-    private boolean retryServiceDiscovery(BluetoothGatt gatt,
-                                          String reason) {
-        if (discoveryRetried) {
-            return false;
+    private void writePayload(BluetoothGatt gatt,
+                              BluetoothGattCharacteristic characteristic) {
+        String text;
+        if (operation == Operation.START_GAME) {
+            text = "GAME:START";
+            log("Writing Breakout start command");
+        } else {
+            ZonedDateTime phoneTime = ZonedDateTime.now();
+            LocalDateTime localPhoneTime = phoneTime.toLocalDateTime();
+            text = localPhoneTime.format(
+                    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            log("Writing local phone time " + text +
+                    " zone=" + phoneTime.getZone() +
+                    " offset=" + phoneTime.getOffset());
         }
-
-        discoveryRetried = true;
-        log(reason + ", refreshing GATT cache and retrying discovery");
-        refreshGattCache(gatt);
-        mainHandler.postDelayed(gatt::discoverServices, 800L);
-        return true;
-    }
-
-    @SuppressLint("MissingPermission")
-    private void writeCurrentTime(BluetoothGatt gatt,
-                                  BluetoothGattCharacteristic characteristic) {
-        ZonedDateTime phoneTime = ZonedDateTime.now();
-        LocalDateTime localPhoneTime = phoneTime.toLocalDateTime();
-        String text = localPhoneTime.format(
-                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
         byte[] value = text.getBytes(StandardCharsets.UTF_8);
 
-        log("Writing local phone time " + text +
-                " zone=" + phoneTime.getZone() +
-                " offset=" + phoneTime.getOffset());
         log("Characteristic " + characteristic.getUuid());
 
         characteristic.setWriteType(

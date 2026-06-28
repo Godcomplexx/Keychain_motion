@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
 #include "nvs_flash.h"
 
 #include "host/ble_gap.h"
@@ -28,12 +29,16 @@ static const char *TAG = "phone_sync";
 void ble_store_config_init(void);
 
 static uint8_t s_own_addr_type;
+static bool s_nvs_initialized;
+static bool s_stack_initialized;
 static bool s_host_synced;
 static bool s_advertising_requested;
 static bool s_has_pending_datetime;
+static phone_sync_command_t s_pending_command;
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_time_chr_handle;
 static device_clock_datetime_t s_pending_datetime;
+static portMUX_TYPE s_datetime_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static const ble_uuid128_t s_phone_sync_service_uuid =
     BLE_UUID128_INIT(0x42, 0x13, 0x37, 0x10, 0x5b, 0x31, 0x49, 0x9a,
@@ -47,6 +52,9 @@ static int time_access(uint16_t conn_handle,
                        uint16_t attr_handle,
                        struct ble_gatt_access_ctxt *ctxt,
                        void *arg);
+static void on_reset(int reason);
+static void on_sync(void);
+static void host_task(void *param);
 
 static const struct ble_gatt_chr_def s_time_characteristics[] = {
     {
@@ -181,7 +189,7 @@ static int start_advertising_if_needed(void)
                            gap_event,
                            NULL);
     if (rc == 0) {
-        ESP_LOGI(TAG, "BLE advertising started as %s",
+        ESP_LOGW(TAG, "BLE advertising started as %s",
                  PHONE_SYNC_DEVICE_NAME);
     } else {
         ESP_LOGE(TAG, "BLE advertising failed: rc=%d", rc);
@@ -190,13 +198,59 @@ static int start_advertising_if_needed(void)
     return rc;
 }
 
+static esp_err_t start_stack_if_needed(void)
+{
+    if (s_stack_initialized) {
+        return ESP_OK;
+    }
+    if (!s_nvs_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    s_host_synced = false;
+    s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    s_time_chr_handle = 0;
+
+    esp_err_t err = nimble_port_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ble_hs_cfg.reset_cb = on_reset;
+    ble_hs_cfg.sync_cb = on_sync;
+    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
+
+    ble_svc_gap_init();
+    ble_svc_gatt_init();
+
+    int rc = ble_gatts_count_cfg(s_services);
+    if (rc == 0) {
+        rc = ble_gatts_add_svcs(s_services);
+    }
+    if (rc == 0) {
+        rc = ble_svc_gap_device_name_set(PHONE_SYNC_DEVICE_NAME);
+    }
+    if (rc != 0) {
+        ESP_LOGE(TAG, "BLE service setup failed: rc=%d", rc);
+        (void)nimble_port_deinit();
+        return ESP_FAIL;
+    }
+
+    ble_store_config_init();
+    s_stack_initialized = true;
+    nimble_port_freertos_init(host_task);
+    ESP_LOGI(TAG, "BLE stack initialized on demand");
+    return ESP_OK;
+}
+
 static int gap_event(struct ble_gap_event *event, void *arg)
 {
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             s_conn_handle = event->connect.conn_handle;
-            ESP_LOGI(TAG, "Phone connected");
+            ESP_LOGW(TAG, "Phone connected");
         } else {
             ESP_LOGW(TAG, "Phone connection failed: status=%d",
                      event->connect.status);
@@ -206,7 +260,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
 
     case BLE_GAP_EVENT_DISCONNECT:
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
-        ESP_LOGI(TAG, "Phone disconnected: reason=%d",
+        ESP_LOGW(TAG, "Phone disconnected: reason=%d",
                  event->disconnect.reason);
         start_advertising_if_needed();
         return 0;
@@ -225,8 +279,11 @@ static int time_access(uint16_t conn_handle,
                        struct ble_gatt_access_ctxt *ctxt,
                        void *arg)
 {
+    ESP_LOGW(TAG, "Time characteristic access: op=%d, handle=%u",
+             ctxt->op, (unsigned int)attr_handle);
+
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-        const char help[] = "write YYYY-MM-DD HH:MM:SS";
+        const char help[] = "time or GAME:START";
         ESP_LOGI(TAG, "Phone read time characteristic");
         const int rc = os_mbuf_append(ctxt->om,
                                       help,
@@ -250,15 +307,25 @@ static int time_access(uint16_t conn_handle,
                  (unsigned int)length,
                  text);
 
+        if (strcmp(text, "GAME:START") == 0) {
+            portENTER_CRITICAL(&s_datetime_lock);
+            s_pending_command = PHONE_SYNC_COMMAND_START_GAME;
+            portEXIT_CRITICAL(&s_datetime_lock);
+            ESP_LOGW(TAG, "Breakout start command received");
+            return 0;
+        }
+
         device_clock_datetime_t datetime;
         if (!parse_datetime_text(text, &datetime)) {
             ESP_LOGW(TAG, "Invalid phone time: %s", text);
             return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
         }
 
+        portENTER_CRITICAL(&s_datetime_lock);
         s_pending_datetime = datetime;
         s_has_pending_datetime = true;
-        ESP_LOGI(TAG, "Phone time received: %04u-%02u-%02u %02u:%02u:%02u",
+        portEXIT_CRITICAL(&s_datetime_lock);
+        ESP_LOGW(TAG, "Phone time received: %04u-%02u-%02u %02u:%02u:%02u",
                  (unsigned int)datetime.year,
                  (unsigned int)datetime.month,
                  (unsigned int)datetime.day,
@@ -278,12 +345,20 @@ static void on_reset(int reason)
 
 static void on_sync(void)
 {
-    int rc = ble_hs_id_infer_auto(0, &s_own_addr_type);
+    ble_addr_t random_address;
+    int rc = ble_hs_id_gen_rnd(1, &random_address);
     if (rc != 0) {
-        ESP_LOGE(TAG, "BLE address setup failed: rc=%d", rc);
+        ESP_LOGE(TAG, "BLE random address generation failed: rc=%d", rc);
         return;
     }
 
+    rc = ble_hs_id_set_rnd(random_address.val);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "BLE random address setup failed: rc=%d", rc);
+        return;
+    }
+
+    s_own_addr_type = BLE_OWN_ADDR_RANDOM;
     s_host_synced = true;
     start_advertising_if_needed();
 }
@@ -297,6 +372,10 @@ static void host_task(void *param)
 
 esp_err_t phone_sync_init(void)
 {
+    if (s_nvs_initialized) {
+        return ESP_OK;
+    }
+
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
         err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -307,50 +386,30 @@ esp_err_t phone_sync_init(void)
         return err;
     }
 
-    err = nimble_port_init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    ble_hs_cfg.reset_cb = on_reset;
-    ble_hs_cfg.sync_cb = on_sync;
-    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
-
-    ble_svc_gap_init();
-    ble_svc_gatt_init();
-
-    int rc = ble_gatts_count_cfg(s_services);
-    if (rc != 0) {
-        return ESP_FAIL;
-    }
-    rc = ble_gatts_add_svcs(s_services);
-    if (rc != 0) {
-        ESP_LOGE(TAG, "BLE GATT service add failed: rc=%d", rc);
-        return ESP_FAIL;
-    }
-
-    ESP_LOGI(TAG, "BLE GATT time service registered");
-
-    rc = ble_svc_gap_device_name_set(PHONE_SYNC_DEVICE_NAME);
-    if (rc != 0) {
-        return ESP_FAIL;
-    }
-
-    ble_store_config_init();
-    nimble_port_freertos_init(host_task);
+    s_nvs_initialized = true;
+    ESP_LOGI(TAG, "BLE sync ready; radio remains off until requested");
     return ESP_OK;
 }
 
-void phone_sync_request_advertising(void)
+esp_err_t phone_sync_request_advertising(void)
 {
     s_advertising_requested = true;
-    start_advertising_if_needed();
+    esp_err_t err = start_stack_if_needed();
+    if (err != ESP_OK) {
+        s_advertising_requested = false;
+        return err;
+    }
+
+    return start_advertising_if_needed() == 0 ? ESP_OK : ESP_FAIL;
 }
 
 void phone_sync_stop_advertising(void)
 {
     s_advertising_requested = false;
+
+    if (!s_stack_initialized) {
+        return;
+    }
 
     if (ble_gap_adv_active()) {
         (void)ble_gap_adv_stop();
@@ -362,13 +421,69 @@ void phone_sync_stop_advertising(void)
     ESP_LOGI(TAG, "BLE advertising stopped");
 }
 
+esp_err_t phone_sync_shutdown(void)
+{
+    s_advertising_requested = false;
+    if (!s_stack_initialized) {
+        return ESP_OK;
+    }
+
+    if (ble_gap_adv_active()) {
+        (void)ble_gap_adv_stop();
+    }
+    if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+        (void)ble_gap_terminate(s_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+        s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    }
+
+    int rc = nimble_port_stop();
+    if (rc != 0) {
+        ESP_LOGE(TAG, "BLE stack stop failed: rc=%d", rc);
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = nimble_port_deinit();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "BLE stack deinit failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    s_stack_initialized = false;
+    s_host_synced = false;
+    ESP_LOGI(TAG, "BLE stack powered down");
+    return ESP_OK;
+}
+
 bool phone_sync_get_datetime_update(device_clock_datetime_t *datetime)
 {
-    if (datetime == NULL || !s_has_pending_datetime) {
+    if (datetime == NULL) {
         return false;
     }
 
-    *datetime = s_pending_datetime;
-    s_has_pending_datetime = false;
-    return true;
+    bool has_update = false;
+    portENTER_CRITICAL(&s_datetime_lock);
+    if (s_has_pending_datetime) {
+        *datetime = s_pending_datetime;
+        s_has_pending_datetime = false;
+        has_update = true;
+    }
+    portEXIT_CRITICAL(&s_datetime_lock);
+    return has_update;
+}
+
+bool phone_sync_get_command(phone_sync_command_t *command)
+{
+    if (command == NULL) {
+        return false;
+    }
+
+    bool has_command = false;
+    portENTER_CRITICAL(&s_datetime_lock);
+    if (s_pending_command != PHONE_SYNC_COMMAND_NONE) {
+        *command = s_pending_command;
+        s_pending_command = PHONE_SYNC_COMMAND_NONE;
+        has_command = true;
+    }
+    portEXIT_CRITICAL(&s_datetime_lock);
+    return has_command;
 }

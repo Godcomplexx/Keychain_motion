@@ -28,8 +28,11 @@ public class MainActivity extends Activity {
     private TextView logText;
     private Button syncButton;
     private Button autoButton;
+    private Button gameButton;
     private KeychainBleSync bleSync;
     private boolean autoSyncEnabled;
+    private boolean manualGameRequest;
+    private boolean manualOperationRunning;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -45,20 +48,30 @@ public class MainActivity extends Activity {
             @Override
             public void onFinished(boolean success) {
                 setBusy(false);
-                setStatus(success ? "Synced" : "Ready");
+                setStatus(success
+                        ? (manualGameRequest ? "Breakout started" : "Synced")
+                        : "Ready");
+                manualGameRequest = false;
             }
         });
 
         syncButton.setOnClickListener(view -> startManualSync());
         autoButton.setOnClickListener(view -> toggleAutoSync());
-        setStatus("Ready");
-        log("Opening the app also tries one sync");
+        gameButton.setOnClickListener(view -> startBreakout());
+        autoSyncEnabled = SyncPreferences.isAutoSyncEnabled(this);
+        updateAutoSyncUi();
+        setStatus(autoSyncEnabled ? "Watching in background" : "Ready");
 
-        if (hasRequiredPermissions()) {
-            startManualSync();
-        } else {
+        if (!hasRequiredPermissions()) {
             requestRequiredPermissions();
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        autoSyncEnabled = SyncPreferences.isAutoSyncEnabled(this);
+        updateAutoSyncUi();
     }
 
     @Override
@@ -78,7 +91,7 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(0xFFF7F7F3);
 
         TextView title = new TextView(this);
-        title.setText("Keychain Sync");
+        title.setText("Keychain Sync 0.5");
         title.setTextSize(26);
         title.setTextColor(0xFF13201F);
         root.addView(title, new LinearLayout.LayoutParams(
@@ -107,6 +120,13 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(52)));
 
+        gameButton = new Button(this);
+        gameButton.setText("Start Breakout");
+        gameButton.setAllCaps(false);
+        root.addView(gameButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(52)));
+
         logText = new TextView(this);
         logText.setTextSize(14);
         logText.setTextColor(0xFF162321);
@@ -132,9 +152,39 @@ public class MainActivity extends Activity {
             return;
         }
 
+        if (autoSyncEnabled) {
+            log("Stop auto sync before starting a manual scan");
+            return;
+        }
+
         setBusy(true);
+        manualGameRequest = false;
         setStatus("Scanning");
         bleSync.start();
+    }
+
+    private void startBreakout() {
+        if (!hasRequiredPermissions()) {
+            requestRequiredPermissions();
+            return;
+        }
+
+        setStatus("Waiting for keychain");
+        if (autoSyncEnabled) {
+            Intent intent = new Intent(this, KeychainSyncService.class);
+            intent.setAction(KeychainSyncService.ACTION_START_GAME);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
+            log("Breakout request queued for the next BLE window");
+            return;
+        }
+
+        setBusy(true);
+        manualGameRequest = true;
+        bleSync.startGame();
     }
 
     private void toggleAutoSync() {
@@ -148,7 +198,9 @@ public class MainActivity extends Activity {
             intent.setAction(KeychainSyncService.ACTION_STOP);
             startService(intent);
             autoSyncEnabled = false;
-            autoButton.setText("Start auto sync");
+            SyncPreferences.setAutoSyncEnabled(this, false);
+            updateAutoSyncUi();
+            setStatus("Ready");
             log("Background auto sync stopped");
         } else {
             intent.setAction(KeychainSyncService.ACTION_START);
@@ -158,9 +210,25 @@ public class MainActivity extends Activity {
                 startService(intent);
             }
             autoSyncEnabled = true;
-            autoButton.setText("Stop auto sync");
+            SyncPreferences.setAutoSyncEnabled(this, true);
+            updateAutoSyncUi();
+            setStatus("Watching in background");
             log("Background auto sync started");
         }
+    }
+
+    private void updateAutoSyncUi() {
+        if (autoButton == null || syncButton == null ||
+            gameButton == null) {
+            return;
+        }
+        autoButton.setText(autoSyncEnabled
+                ? "Stop auto sync"
+                : "Start auto sync");
+        syncButton.setEnabled(!autoSyncEnabled &&
+                              !manualOperationRunning);
+        autoButton.setEnabled(!manualOperationRunning);
+        gameButton.setEnabled(!manualOperationRunning);
     }
 
     private boolean hasRequiredPermissions() {
@@ -202,14 +270,18 @@ public class MainActivity extends Activity {
 
         if (hasRequiredPermissions()) {
             log("Permissions granted");
-            startManualSync();
         } else {
             log("Bluetooth permissions are required");
         }
     }
 
     private void setBusy(boolean busy) {
-        mainHandler.post(() -> syncButton.setEnabled(!busy));
+        manualOperationRunning = busy;
+        mainHandler.post(() -> {
+            syncButton.setEnabled(!busy && !autoSyncEnabled);
+            autoButton.setEnabled(!busy);
+            gameButton.setEnabled(!busy);
+        });
     }
 
     private void setStatus(String status) {

@@ -8,6 +8,7 @@ typedef enum {
     MOTION_STATE_FLUID = 0,
     MOTION_STATE_SLEEP,
     MOTION_STATE_TIME,
+    MOTION_STATE_GAME,
 } motion_state_t;
 
 typedef enum {
@@ -17,6 +18,8 @@ typedef enum {
     MOTION_EVENT_SHAKE_DETECTED,
     MOTION_EVENT_TIME_REQUESTED,
     MOTION_EVENT_TIME_TIMEOUT,
+    MOTION_EVENT_GAME_REQUESTED,
+    MOTION_EVENT_GAME_FINISHED,
 } motion_event_t;
 
 typedef struct {

@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "adxl345.h"
+#include "mpu6050.h"
 
 typedef struct {
     bool movement_detected;
@@ -20,7 +20,7 @@ typedef struct {
     int64_t stillness_timeout_us;
     bool has_previous_raw_data;
     int64_t last_movement_us;
-    adxl345_raw_data_t previous_raw_data;
+    mpu6050_accel_data_t previous_raw_data;
 
     /*
      * A single jolt should not open the TIME screen. The detector counts
@@ -32,7 +32,7 @@ typedef struct {
     int64_t shake_window_us;
     int shake_count;
     int64_t shake_window_start_us;
-    bool was_above_shake_threshold;
+    int64_t last_shake_peak_us;
 } motion_detector_t;
 
 void motion_detector_init(motion_detector_t *detector,
@@ -44,7 +44,7 @@ void motion_detector_init(motion_detector_t *detector,
                           int64_t stillness_timeout_us);
 
 motion_detector_result_t motion_detector_update(motion_detector_t *detector,
-                                                const adxl345_raw_data_t *data,
+                                                const mpu6050_accel_data_t *data,
                                                 int64_t now_us);
 
 bool motion_detector_has_recent_movement(const motion_detector_t *detector,

@@ -27,8 +27,9 @@
     ((float)BOARD_OLED_HEIGHT / (float)FLIP_GRID_HEIGHT)
 
 #define FLIP_MIN_FRAME_SECONDS 0.005f
-#define FLIP_MAX_FRAME_SECONDS 0.050f
-#define FLIP_SUBSTEPS 1
+#define FLIP_MAX_SUBSTEP_SECONDS 0.050f
+#define FLIP_MAX_CATCHUP_SECONDS 0.150f
+#define FLIP_MAX_SUBSTEPS 3
 #define FLIP_PRESSURE_ITERATIONS 8
 #define FLIP_SEPARATION_ITERATIONS 1
 #define FLIP_BLEND_RATIO 0.92f
@@ -793,10 +794,13 @@ esp_err_t flip_animation_render(float tilt_x, float tilt_y,
 
     const float safe_delta = clamp_float(delta_seconds,
                                           FLIP_MIN_FRAME_SECONDS,
-                                          FLIP_MAX_FRAME_SECONDS);
-    const float substep_seconds = safe_delta / (float)FLIP_SUBSTEPS;
+                                          FLIP_MAX_CATCHUP_SECONDS);
+    int substep_count =
+        (int)ceilf(safe_delta / FLIP_MAX_SUBSTEP_SECONDS);
+    substep_count = clamp_int(substep_count, 1, FLIP_MAX_SUBSTEPS);
+    const float substep_seconds = safe_delta / (float)substep_count;
 
-    for (int step = 0; step < FLIP_SUBSTEPS; ++step) {
+    for (int step = 0; step < substep_count; ++step) {
         simulate_substep(tilt_x, tilt_y, substep_seconds);
     }
 

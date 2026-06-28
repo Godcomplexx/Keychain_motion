@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "adxl345.h"
+#include "mpu6050.h"
 
 typedef struct {
     uint32_t steps_today;
@@ -19,7 +19,7 @@ typedef struct {
 void step_counter_init(step_counter_t *counter, uint32_t date_key);
 
 void step_counter_update(step_counter_t *counter,
-                         const adxl345_raw_data_t *data,
+                         const mpu6050_accel_data_t *data,
                          uint32_t date_key,
                          int64_t now_us);
 

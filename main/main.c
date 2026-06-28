@@ -1,20 +1,27 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "driver/gpio.h"
+#include "driver/usb_serial_jtag.h"
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_pm.h"
+#include "esp_random.h"
+#include "esp_sleep.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include "adxl345.h"
+#include "board_config.h"
+#include "breakout_game.h"
 #include "device_clock.h"
 #include "flip_animation.h"
 #include "i2c_bus.h"
 #include "idle_animation.h"
 #include "motion_detector.h"
 #include "motion_state.h"
+#include "mpu6050.h"
 #include "oled_display.h"
 #include "phone_sync.h"
 #include "step_counter.h"
@@ -22,29 +29,21 @@
 
 /*
  * FLUID is the default active state, so its loop rate dominates average power.
- * The delay between FLUID frames caps the animation rate to roughly 25-30 FPS
- * instead of running as fast as the CPU/I2C allow. The exact FPS and current
- * still depend on the real framebuffer transfer time and MUST be measured on
- * hardware (see docs/07_power_and_battery.md, P0). The value is kept well below
- * the FLIP physics clamp (FLIP_MAX_FRAME_SECONDS = 50 ms) so physics stays
- * stable even if a frame takes longer than expected.
+ * A short delay plus 200 kHz I2C targets roughly 9-12 FPS. FLIP splits longer
+ * frame intervals into stable 50 ms physics substeps instead of dropping time.
  */
-/*
- * The current prototype uses an I2C OLED. A full 128x64 framebuffer is about
- * 1 KB, so refreshing too often makes the breadboard bus much easier to upset.
- * Keep FLUID deliberately slow until the display wiring is stable.
- */
-#define ACTIVE_FRAME_DELAY_MS 200
+#define ACTIVE_FRAME_DELAY_MS 40
+#define GAME_FRAME_DELAY_MS 40
 #define STARTUP_SCREEN_DELAY_MS 1000
 #define MICROSECONDS_PER_SECOND 1000000.0f
 /*
  * Logging every frame wastes CPU and UART time in normal battery operation.
- * At ~30 FPS in FLUID this logs roughly once every few seconds, which is enough
- * to confirm behavior without dominating the loop.
+ * At the conservative FLUID rate this logs roughly once per minute.
  */
 #define RAW_LOG_INTERVAL_FRAMES 200
-#define SLEEP_STILLNESS_TIMEOUT_US 60000000
-#define SLEEP_FRAME_INTERVAL_US 300000
+#define SLEEP_STILLNESS_TIMEOUT_US 30000000
+#define OLED_OFF_SLEEP_DELAY_US 30000000
+#define SLEEP_FRAME_INTERVAL_US 600000
 /*
  * The TIME screen only shows whole seconds, so refreshing it four times per
  * second just sent the same 1 KB framebuffer over I2C three extra times. Once
@@ -59,18 +58,107 @@
 #define MOTION_SHAKE_DELTA_THRESHOLD 350
 /*
  * TIME should open only on an intentional gesture, not on a single accidental
- * bump. Require two shake peaks within a short window before entering TIME;
- * the prototype logs showed real hand shakes around delta=411, so the previous
- * threshold of 500 was too strict.
+ * bump. Require three shake peaks within a short window before requesting a
+ * phone sync; TIME opens only after the phone sends fresh time.
  */
-#define MOTION_SHAKE_COUNT_REQUIRED 2
+#define MOTION_SHAKE_COUNT_REQUIRED 3
 #define MOTION_SHAKE_WINDOW_US 2500000
-#define OLED_ACTIVE_CONTRAST 0xCF
+#define PHONE_SYNC_WINDOW_US 60000000
+#define PHONE_SYNC_SHUTDOWN_GRACE_MS 200
+#define CPU_MAX_FREQUENCY_MHZ 160
+#define CPU_MIN_FREQUENCY_MHZ 40
+#define OLED_ACTIVE_CONTRAST 0x9F
+#define OLED_GAME_CONTRAST 0x8F
 #define OLED_IDLE_CONTRAST 0x18
 #define DISPLAY_RENDER_FAILURE_LIMIT 5
 #define DISPLAY_RENDER_RECOVERY_DELAY_MS 250
 
 static const char *TAG = "keychain";
+
+static esp_err_t configure_power_management(void)
+{
+    const esp_pm_config_t config = {
+        .max_freq_mhz = CPU_MAX_FREQUENCY_MHZ,
+        .min_freq_mhz = CPU_MIN_FREQUENCY_MHZ,
+        .light_sleep_enable = false,
+    };
+    return esp_pm_configure(&config);
+}
+
+static esp_err_t enter_motion_wakeup_sleep(void)
+{
+    bool sensor_low_power = false;
+    bool display_off = false;
+    bool gpio_wakeup_configured = false;
+    bool wakeup_enabled = false;
+
+    esp_err_t err = phone_sync_shutdown();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    const gpio_config_t interrupt_gpio_config = {
+        .pin_bit_mask = 1ULL << BOARD_MPU6050_INT_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    err = gpio_config(&interrupt_gpio_config);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = mpu6050_set_motion_wakeup_mode();
+    if (err != ESP_OK) {
+        return err;
+    }
+    sensor_low_power = true;
+
+    err = oled_display_set_power(false);
+    if (err != ESP_OK) {
+        goto cleanup;
+    }
+    display_off = true;
+
+    err = gpio_wakeup_enable(BOARD_MPU6050_INT_GPIO,
+                             GPIO_INTR_HIGH_LEVEL);
+    if (err != ESP_OK) {
+        goto cleanup;
+    }
+    gpio_wakeup_configured = true;
+
+    err = esp_sleep_enable_gpio_wakeup();
+    if (err != ESP_OK) {
+        goto cleanup;
+    }
+    wakeup_enabled = true;
+
+    ESP_LOGI(TAG, "OLED off; entering light sleep until MPU-6050 motion");
+    err = esp_light_sleep_start();
+
+cleanup:
+    if (wakeup_enabled) {
+        (void)esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+    }
+    if (gpio_wakeup_configured) {
+        (void)gpio_wakeup_disable(BOARD_MPU6050_INT_GPIO);
+    }
+    if (sensor_low_power) {
+        esp_err_t restore_err = mpu6050_set_active_mode();
+        if (err == ESP_OK) {
+            err = restore_err;
+        }
+    }
+    if (display_off) {
+        esp_err_t display_err = oled_display_set_power(true);
+        if (err == ESP_OK) {
+            err = display_err;
+        }
+    }
+
+    return err;
+}
 
 static esp_err_t render_sleep_frame_if_due(int64_t now_us,
                                            int64_t *previous_sleep_frame_us,
@@ -114,10 +202,13 @@ static esp_err_t render_time_frame_if_due(int64_t now_us,
         .clock_synced = device_clock_has_phone_sync(device_clock),
     };
 
-    *previous_time_frame_us = now_us;
-    return time_animation_render(&view,
-                                 now_us - entered_at_us,
-                                 TIME_STATE_DURATION_US);
+    esp_err_t err = time_animation_render(&view,
+                                          now_us - entered_at_us,
+                                          TIME_STATE_DURATION_US);
+    if (err == ESP_OK) {
+        *previous_time_frame_us = now_us;
+    }
+    return err;
 }
 
 static esp_err_t apply_state_entry_actions(motion_state_t state,
@@ -130,6 +221,8 @@ static esp_err_t apply_state_entry_actions(motion_state_t state,
     switch (state) {
     case MOTION_STATE_FLUID:
         /* Active animation should use normal brightness and fresh physics. */
+        ESP_RETURN_ON_ERROR(oled_display_set_power(true),
+                            TAG, "OLED active power setup failed");
         ESP_RETURN_ON_ERROR(oled_display_set_contrast(OLED_ACTIVE_CONTRAST),
                             TAG, "OLED active contrast setup failed");
         flip_animation_reset();
@@ -138,6 +231,8 @@ static esp_err_t apply_state_entry_actions(motion_state_t state,
 
     case MOTION_STATE_SLEEP:
         /* Sleep animation stays visible but dimmer and slower. */
+        ESP_RETURN_ON_ERROR(oled_display_set_power(true),
+                            TAG, "OLED sleep power setup failed");
         ESP_RETURN_ON_ERROR(oled_display_set_contrast(OLED_IDLE_CONTRAST),
                             TAG, "OLED sleep contrast setup failed");
         *sleep_frame_index = 0;
@@ -146,9 +241,19 @@ static esp_err_t apply_state_entry_actions(motion_state_t state,
 
     case MOTION_STATE_TIME:
         /* TIME is a visible interaction state, so restore normal contrast. */
+        ESP_RETURN_ON_ERROR(oled_display_set_power(true),
+                            TAG, "OLED time power setup failed");
         ESP_RETURN_ON_ERROR(oled_display_set_contrast(OLED_ACTIVE_CONTRAST),
                             TAG, "OLED time contrast setup failed");
         *previous_time_frame_us = 0;
+        break;
+
+    case MOTION_STATE_GAME:
+        ESP_RETURN_ON_ERROR(oled_display_set_power(true),
+                            TAG, "OLED game power setup failed");
+        ESP_RETURN_ON_ERROR(oled_display_set_contrast(OLED_GAME_CONTRAST),
+                            TAG, "OLED game contrast setup failed");
+        *previous_frame_us = now_us;
         break;
 
     default:
@@ -209,16 +314,22 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "Smart Motion Keychain started");
 
+    esp_err_t err = configure_power_management();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Dynamic frequency scaling unavailable: %s",
+                 esp_err_to_name(err));
+    }
+
     /* Prepare the FLIP particle arrays before the render loop uses them. */
     flip_animation_stats_t flip_stats;
-    esp_err_t err = flip_animation_prepare(&flip_stats);
+    err = flip_animation_prepare(&flip_stats);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "FLIP data-model preparation failed: %s",
                  esp_err_to_name(err));
         return;
     }
 
-    /* Verify the I2C address before the driver reads ADXL345 registers. */
+    /* Verify the I2C address before the driver reads MPU-6050 registers. */
     err = i2c_bus_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "I2C initialization failed: %s", esp_err_to_name(err));
@@ -232,9 +343,9 @@ void app_main(void)
         return;
     }
 
-    err = adxl345_init();
+    err = mpu6050_init();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "ADXL345 initialization failed: %s",
+        ESP_LOGE(TAG, "MPU-6050 initialization failed: %s",
                  esp_err_to_name(err));
         i2c_bus_deinit();
         return;
@@ -243,7 +354,7 @@ void app_main(void)
     err = oled_display_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "OLED initialization failed: %s", esp_err_to_name(err));
-        adxl345_deinit();
+        mpu6050_deinit();
         i2c_bus_deinit();
         return;
     }
@@ -253,7 +364,7 @@ void app_main(void)
         ESP_LOGE(TAG, "OLED contrast setup failed: %s",
                  esp_err_to_name(err));
         oled_display_deinit();
-        adxl345_deinit();
+        mpu6050_deinit();
         i2c_bus_deinit();
         return;
     }
@@ -262,14 +373,14 @@ void app_main(void)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "OLED drawing failed: %s", esp_err_to_name(err));
         oled_display_deinit();
-        adxl345_deinit();
+        mpu6050_deinit();
         i2c_bus_deinit();
         return;
     }
 
     vTaskDelay(pdMS_TO_TICKS(STARTUP_SCREEN_DELAY_MS));
     flip_animation_reset();
-    ESP_LOGI(TAG, "Starting ADXL345-controlled FLIP particle animation");
+    ESP_LOGI(TAG, "Starting MPU-6050-controlled FLIP particle animation");
 
     uint32_t frames_until_log = 0;
     int64_t previous_frame_us = esp_timer_get_time();
@@ -281,7 +392,9 @@ void app_main(void)
     motion_detector_t motion_detector;
     motion_state_machine_t motion_state;
     step_counter_t step_counter;
+    breakout_game_t breakout_game;
     uint8_t display_render_failure_count = 0;
+    float last_tilt_x = 0.0f;
 
     device_clock_init(&device_clock, previous_frame_us);
     device_clock_datetime_t datetime;
@@ -289,9 +402,12 @@ void app_main(void)
     step_counter_init(&step_counter, device_clock_date_key(&datetime));
 
     err = phone_sync_init();
+    const bool phone_sync_available = err == ESP_OK;
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Phone sync BLE disabled: %s", esp_err_to_name(err));
     }
+    bool phone_sync_window_active = false;
+    int64_t phone_sync_window_deadline_us = 0;
 
     motion_detector_init(&motion_detector,
                          previous_frame_us,
@@ -310,12 +426,59 @@ void app_main(void)
         previous_frame_us = current_frame_us;
         motion_state_t current_state = motion_state_get(&motion_state);
 
-        if (device_clock_is_stale(&device_clock, current_frame_us)) {
-            phone_sync_request_advertising();
+        if (phone_sync_window_active &&
+            current_frame_us >= phone_sync_window_deadline_us) {
+            phone_sync_stop_advertising();
+            const esp_err_t shutdown_err = phone_sync_shutdown();
+            if (shutdown_err != ESP_OK) {
+                ESP_LOGW(TAG, "BLE shutdown after timeout failed: %s",
+                         esp_err_to_name(shutdown_err));
+            }
+            phone_sync_window_active = false;
+            ESP_LOGI(TAG, "Phone sync window expired");
+        }
+
+        phone_sync_command_t phone_command;
+        if (phone_sync_available &&
+            phone_sync_get_command(&phone_command)) {
+            phone_sync_window_active = false;
+            phone_sync_stop_advertising();
+            vTaskDelay(pdMS_TO_TICKS(PHONE_SYNC_SHUTDOWN_GRACE_MS));
+            const esp_err_t shutdown_err = phone_sync_shutdown();
+            if (shutdown_err != ESP_OK) {
+                ESP_LOGW(TAG, "BLE shutdown after command failed: %s",
+                         esp_err_to_name(shutdown_err));
+            }
+
+            if (phone_command == PHONE_SYNC_COMMAND_START_GAME) {
+                const motion_state_t previous_state = current_state;
+                current_state = motion_state_handle_event(
+                    &motion_state,
+                    MOTION_EVENT_GAME_REQUESTED,
+                    true,
+                    current_frame_us);
+                breakout_game_start(&breakout_game,
+                                    current_frame_us,
+                                    esp_random(),
+                                    last_tilt_x);
+                if (current_state != previous_state) {
+                    err = apply_state_entry_actions(current_state,
+                                                    current_frame_us,
+                                                    &previous_frame_us,
+                                                    &previous_sleep_frame_us,
+                                                    &sleep_frame_index,
+                                                    &previous_time_frame_us);
+                    if (err != ESP_OK) {
+                        break;
+                    }
+                }
+                ESP_LOGW(TAG, "Breakout started from phone command");
+            }
         }
 
         device_clock_datetime_t phone_datetime;
-        if (phone_sync_get_datetime_update(&phone_datetime)) {
+        if (phone_sync_available &&
+            phone_sync_get_datetime_update(&phone_datetime)) {
             device_clock_set_datetime(&device_clock,
                                       &phone_datetime,
                                       current_frame_us);
@@ -324,8 +487,15 @@ void app_main(void)
                 step_counter_init(&step_counter,
                                   device_clock_date_key(&phone_datetime));
             }
+            phone_sync_window_active = false;
             phone_sync_stop_advertising();
-            ESP_LOGI(TAG,
+            vTaskDelay(pdMS_TO_TICKS(PHONE_SYNC_SHUTDOWN_GRACE_MS));
+            const esp_err_t shutdown_err = phone_sync_shutdown();
+            if (shutdown_err != ESP_OK) {
+                ESP_LOGW(TAG, "BLE shutdown after sync failed: %s",
+                         esp_err_to_name(shutdown_err));
+            }
+            ESP_LOGW(TAG,
                      "Clock synced from phone: %04u-%02u-%02u %02u:%02u:%02u",
                      (unsigned int)phone_datetime.year,
                      (unsigned int)phone_datetime.month,
@@ -375,15 +545,45 @@ void app_main(void)
                 break;
             }
 
-            /*
-             * TIME is over. If the clock is already fresh, stop any BLE
-             * advertising that the shake started so we do not keep the radio
-             * on. If the clock is still stale, the stale check at the top of
-             * the loop keeps advertising until a sync succeeds.
-             */
-            if (!device_clock_is_stale(&device_clock, current_frame_us)) {
-                phone_sync_stop_advertising();
+        }
+
+        if (current_state == MOTION_STATE_SLEEP &&
+            !phone_sync_window_active &&
+            !usb_serial_jtag_is_connected() &&
+            current_frame_us - motion_state_entered_at_us(&motion_state) >=
+                OLED_OFF_SLEEP_DELAY_US) {
+            err = enter_motion_wakeup_sleep();
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Light sleep failed: %s",
+                         esp_err_to_name(err));
+                break;
             }
+
+            const int64_t woke_at_us = esp_timer_get_time();
+            motion_detector_init(&motion_detector,
+                                 woke_at_us,
+                                 MOTION_MOVEMENT_DELTA_THRESHOLD,
+                                 MOTION_SHAKE_DELTA_THRESHOLD,
+                                 MOTION_SHAKE_COUNT_REQUIRED,
+                                 MOTION_SHAKE_WINDOW_US,
+                                 SLEEP_STILLNESS_TIMEOUT_US);
+            current_state = motion_state_handle_event(
+                &motion_state,
+                MOTION_EVENT_MOVEMENT_DETECTED,
+                true,
+                woke_at_us);
+            err = apply_state_entry_actions(current_state,
+                                            woke_at_us,
+                                            &previous_frame_us,
+                                            &previous_sleep_frame_us,
+                                            &sleep_frame_index,
+                                            &previous_time_frame_us);
+            if (err != ESP_OK) {
+                break;
+            }
+            previous_low_power_sensor_read_us = woke_at_us;
+            ESP_LOGI(TAG, "Woke from light sleep by MPU-6050 motion");
+            continue;
         }
 
         if ((current_state == MOTION_STATE_SLEEP ||
@@ -403,11 +603,10 @@ void app_main(void)
                     &step_counter);
             }
 
-            if (err != ESP_OK) {
-                (void)display_render_succeeded_or_deferred(
+            if (!display_render_succeeded_or_deferred(
                     motion_state_name(current_state),
                     err,
-                    &display_render_failure_count);
+                    &display_render_failure_count)) {
                 continue;
             }
 
@@ -415,10 +614,10 @@ void app_main(void)
             continue;
         }
 
-        adxl345_raw_data_t raw_data;
-        err = adxl345_read_raw(&raw_data);
+        mpu6050_accel_data_t raw_data;
+        err = mpu6050_read_accel(&raw_data);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "ADXL345 read failed: %s", esp_err_to_name(err));
+            ESP_LOGE(TAG, "MPU-6050 read failed: %s", esp_err_to_name(err));
             break;
         }
         if (current_state != MOTION_STATE_FLUID) {
@@ -436,7 +635,46 @@ void app_main(void)
         const motion_event_t event =
             detector_result_to_event(&detector_result);
 
-        if (event != MOTION_EVENT_NONE) {
+        if (event == MOTION_EVENT_SHAKE_DETECTED) {
+            if (current_state == MOTION_STATE_GAME) {
+                current_state = motion_state_handle_event(
+                    &motion_state,
+                    MOTION_EVENT_GAME_FINISHED,
+                    true,
+                    current_frame_us);
+                err = apply_state_entry_actions(current_state,
+                                                current_frame_us,
+                                                &previous_frame_us,
+                                                &previous_sleep_frame_us,
+                                                &sleep_frame_index,
+                                                &previous_time_frame_us);
+                if (err != ESP_OK) {
+                    break;
+                }
+                ESP_LOGW(TAG,
+                         "Breakout stopped by triple shake; opening BLE window");
+            }
+
+            if (phone_sync_window_active) {
+                /* One gesture owns the whole 60-second synchronization window. */
+            } else if (phone_sync_available) {
+                err = phone_sync_request_advertising();
+                if (err == ESP_OK) {
+                    phone_sync_window_active = true;
+                    phone_sync_window_deadline_us =
+                        current_frame_us + PHONE_SYNC_WINDOW_US;
+                    ESP_LOGW(
+                        TAG,
+                        "Triple shake detected; waiting up to 60 s for phone time");
+                } else {
+                    ESP_LOGW(TAG, "BLE sync request failed: %s",
+                             esp_err_to_name(err));
+                }
+            } else {
+                ESP_LOGW(TAG,
+                         "Triple shake detected, but phone sync is unavailable");
+            }
+        } else if (event != MOTION_EVENT_NONE) {
             const bool movement_recent =
                 motion_detector_has_recent_movement(&motion_detector,
                                                     current_frame_us);
@@ -457,22 +695,11 @@ void app_main(void)
                     break;
                 }
             }
-
-            /*
-             * A shake opens TIME, so ask the phone for the current time before
-             * the screen is useful. BLE advertising lets the companion app
-             * connect and write fresh time; the screen then updates from the
-             * synced clock. The request is a no-op if already advertising.
-             */
-            if (event == MOTION_EVENT_SHAKE_DETECTED &&
-                current_state == MOTION_STATE_TIME) {
-                phone_sync_request_advertising();
-                ESP_LOGI(TAG, "Requesting phone time for TIME screen");
-            }
         }
 
-        const float tilt_x = adxl345_raw_to_g(raw_data.x);
-        const float tilt_y = adxl345_raw_to_g(raw_data.y);
+        const float tilt_x = mpu6050_accel_to_g(raw_data.x);
+        const float tilt_y = mpu6050_accel_to_g(raw_data.y);
+        last_tilt_x = tilt_x;
 
         if (frames_until_log == 0) {
             const int tilt_x_milligravity = (int)(tilt_x * 1000.0f);
@@ -494,11 +721,10 @@ void app_main(void)
         switch (current_state) {
         case MOTION_STATE_FLUID:
             err = flip_animation_render(tilt_x, tilt_y, frame_seconds);
-            if (err != ESP_OK) {
-                (void)display_render_succeeded_or_deferred(
+            if (!display_render_succeeded_or_deferred(
                     "Particle",
                     err,
-                    &display_render_failure_count);
+                    &display_render_failure_count)) {
                 continue;
             }
             vTaskDelay(pdMS_TO_TICKS(ACTIVE_FRAME_DELAY_MS));
@@ -508,11 +734,10 @@ void app_main(void)
             err = render_sleep_frame_if_due(current_frame_us,
                                             &previous_sleep_frame_us,
                                             &sleep_frame_index);
-            if (err != ESP_OK) {
-                (void)display_render_succeeded_or_deferred(
+            if (!display_render_succeeded_or_deferred(
                     "Sleep",
                     err,
-                    &display_render_failure_count);
+                    &display_render_failure_count)) {
                 continue;
             }
             vTaskDelay(pdMS_TO_TICKS(LOW_POWER_LOOP_DELAY_MS));
@@ -525,15 +750,48 @@ void app_main(void)
                 &previous_time_frame_us,
                 &device_clock,
                 &step_counter);
-            if (err != ESP_OK) {
-                (void)display_render_succeeded_or_deferred(
+            if (!display_render_succeeded_or_deferred(
                     "Time",
                     err,
-                    &display_render_failure_count);
+                    &display_render_failure_count)) {
                 continue;
             }
             vTaskDelay(pdMS_TO_TICKS(LOW_POWER_LOOP_DELAY_MS));
             break;
+
+        case MOTION_STATE_GAME: {
+            bool game_finished = false;
+            err = breakout_game_update_and_render(&breakout_game,
+                                                  tilt_x,
+                                                  frame_seconds,
+                                                  current_frame_us,
+                                                  &game_finished);
+            if (!display_render_succeeded_or_deferred(
+                    "Breakout",
+                    err,
+                    &display_render_failure_count)) {
+                continue;
+            }
+            if (game_finished) {
+                current_state = motion_state_handle_event(
+                    &motion_state,
+                    MOTION_EVENT_GAME_FINISHED,
+                    true,
+                    current_frame_us);
+                err = apply_state_entry_actions(current_state,
+                                                current_frame_us,
+                                                &previous_frame_us,
+                                                &previous_sleep_frame_us,
+                                                &sleep_frame_index,
+                                                &previous_time_frame_us);
+                if (err != ESP_OK) {
+                    break;
+                }
+                ESP_LOGI(TAG, "Breakout finished; returning to FLUID");
+            }
+            vTaskDelay(pdMS_TO_TICKS(GAME_FRAME_DELAY_MS));
+            break;
+        }
 
         default:
             ESP_LOGE(TAG, "Unknown motion state");
@@ -546,7 +804,8 @@ void app_main(void)
         }
     }
 
+    (void)phone_sync_shutdown();
     oled_display_deinit();
-    adxl345_deinit();
+    mpu6050_deinit();
     i2c_bus_deinit();
 }

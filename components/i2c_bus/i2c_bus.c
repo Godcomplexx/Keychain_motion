@@ -45,7 +45,7 @@ esp_err_t i2c_bus_scan(void)
     }
 
     uint8_t device_count = 0;
-    ESP_LOGI(TAG, "Starting I2C scan");
+    ESP_LOGW(TAG, "Starting I2C scan");
 
     for (uint16_t address = I2C_SCAN_FIRST_ADDRESS;
          address <= I2C_SCAN_LAST_ADDRESS;
@@ -54,7 +54,7 @@ esp_err_t i2c_bus_scan(void)
                                          I2C_PROBE_TIMEOUT_MS);
 
         if (err == ESP_OK) {
-            ESP_LOGI(TAG, "Found I2C device at address 0x%02X",
+            ESP_LOGW(TAG, "Found I2C device at address 0x%02X",
                      (unsigned int)address);
             ++device_count;
         } else if (err != ESP_ERR_NOT_FOUND) {
@@ -67,7 +67,7 @@ esp_err_t i2c_bus_scan(void)
     if (device_count == 0) {
         ESP_LOGW(TAG, "I2C scan complete: no devices found");
     } else {
-        ESP_LOGI(TAG, "I2C scan complete: %u device(s) found",
+        ESP_LOGW(TAG, "I2C scan complete: %u device(s) found",
                  (unsigned int)device_count);
     }
 

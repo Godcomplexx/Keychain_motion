@@ -1,4 +1,4 @@
-/* Generated from docs/Sprite-0001-Sheet.png. Edit the PNG, then regenerate this file. */
+/* Generated from assets/Sprite-0001-Sheet.png. Edit the PNG, then regenerate this file. */
 static const uint8_t s_idle_frames[10][1024] = {
     /* Frame 0 */
     {

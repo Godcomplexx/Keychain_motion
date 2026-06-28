@@ -1,9 +1,47 @@
-build/
+# ESP-IDF
+/build/
+/build-*/
+/managed_components/
 sdkconfig
 sdkconfig.old
+
+# Android / Gradle
+android_time_sync/.gradle/
+android_time_sync/.idea/
+android_time_sync/**/build/
+android_time_sync/local.properties
+android_time_sync/captures/
+android_time_sync/.externalNativeBuild/
+android_time_sync/.cxx/
+*.apk
+*.aab
+*.iml
+
+# Signing keys and local configuration
+*.jks
+*.keystore
+keystore.properties
+key.properties
+.env
+.env.*
+!.env.example
+
+# Python environments and caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors
 .vscode/
 .idea/
-android_time_sync/.gradle/
-android_time_sync/build/
-android_time_sync/app/build/
-android_time_sync/local.properties
+*.swp
+*.swo
+*~
+
+# OS and temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
+*.tmp

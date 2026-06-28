@@ -9,21 +9,20 @@ This is a learning-focused embedded systems project.
 The device is a small keychain-sized embedded product with:
 
 * ESP32-C3
-* 0.96 inch 128x64 SPI OLED display
-* ADXL345 GY-291 accelerometer
-* optional TTP223 touch sensor
-* optional LiPo battery and TP4056 charger later
-* 3D printed enclosure later
+* 0.96 inch 128x64 I2C OLED display
+* MPU-6050 motion sensor
+* optional protected LiPo battery and regulated power stage
 
 The project is built with ESP-IDF.
 
 ## Main product behavior
 
-The keychain has three main user-facing states:
+The keychain has four main user-facing states:
 
 * FLUID: default animation based on accelerometer movement
-* SLEEP: slow sleep animation after 60 seconds of stillness
-* TIME: clock/time animation for 60 seconds after shake
+* SLEEP: slow sleep animation after 30 seconds of stillness
+* TIME: clock screen after a successful phone time sync
+* GAME: phone-started Breakout controlled by accelerometer tilt
 
 ## Learning mode rules
 
@@ -61,15 +60,15 @@ When helping with a task:
 
 Read these files before making changes:
 
-* `docs/00_project_overview.md`
-* `docs/01_esp_idf_project_structure.md`
+* `docs/ARCHITECTURE.md`
+* `docs/HARDWARE.md`
 
 ## Milestone order
 
 1. ESP-IDF project structure
 2. I2C scanner
 3. OLED startup screen
-4. ADXL345 raw data
+4. MPU-6050 acceleration data
 5. Motion state machine
 6. Animation engine
 7. Battery and charging plan

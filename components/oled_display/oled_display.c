@@ -335,6 +335,15 @@ esp_err_t oled_display_set_contrast(uint8_t contrast)
                                      sizeof(contrast));
 }
 
+esp_err_t oled_display_set_power(bool on)
+{
+    if (s_panel_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    return esp_lcd_panel_disp_on_off(s_panel_handle, on);
+}
+
 esp_err_t oled_display_deinit(void)
 {
     if (

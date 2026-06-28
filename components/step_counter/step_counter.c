@@ -8,7 +8,7 @@
 #define FAST_FILTER_SHIFT 2
 #define SLOW_FILTER_SHIFT 5
 
-static int raw_magnitude_estimate(const adxl345_raw_data_t *data)
+static int raw_magnitude_estimate(const mpu6050_accel_data_t *data)
 {
     return (int)data->x * (int)data->x +
            (int)data->y * (int)data->y +
@@ -37,7 +37,7 @@ void step_counter_init(step_counter_t *counter, uint32_t date_key)
 }
 
 void step_counter_update(step_counter_t *counter,
-                         const adxl345_raw_data_t *data,
+                         const mpu6050_accel_data_t *data,
                          uint32_t date_key,
                          int64_t now_us)
 {

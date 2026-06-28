@@ -64,8 +64,9 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
 
     switch (machine->current_state) {
     case MOTION_STATE_FLUID:
-        if (event == MOTION_EVENT_SHAKE_DETECTED ||
-            event == MOTION_EVENT_TIME_REQUESTED) {
+        if (event == MOTION_EVENT_GAME_REQUESTED) {
+            transition_to(machine, MOTION_STATE_GAME, event, now_us);
+        } else if (event == MOTION_EVENT_TIME_REQUESTED) {
             transition_to(machine, MOTION_STATE_TIME, event, now_us);
         } else if (event == MOTION_EVENT_STILLNESS_TIMEOUT) {
             transition_to(machine, MOTION_STATE_SLEEP, event, now_us);
@@ -73,8 +74,9 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
         break;
 
     case MOTION_STATE_SLEEP:
-        if (event == MOTION_EVENT_SHAKE_DETECTED ||
-            event == MOTION_EVENT_TIME_REQUESTED) {
+        if (event == MOTION_EVENT_GAME_REQUESTED) {
+            transition_to(machine, MOTION_STATE_GAME, event, now_us);
+        } else if (event == MOTION_EVENT_TIME_REQUESTED) {
             transition_to(machine, MOTION_STATE_TIME, event, now_us);
         } else if (event == MOTION_EVENT_MOVEMENT_DETECTED) {
             transition_to(machine, MOTION_STATE_FLUID, event, now_us);
@@ -82,13 +84,21 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
         break;
 
     case MOTION_STATE_TIME:
-        if (event == MOTION_EVENT_TIME_TIMEOUT) {
+        if (event == MOTION_EVENT_GAME_REQUESTED) {
+            transition_to(machine, MOTION_STATE_GAME, event, now_us);
+        } else if (event == MOTION_EVENT_TIME_TIMEOUT) {
             /* After TIME, choose the next state from recent real motion. */
             transition_to(machine,
                           movement_recent ? MOTION_STATE_FLUID
                                           : MOTION_STATE_SLEEP,
                           event,
                           now_us);
+        }
+        break;
+
+    case MOTION_STATE_GAME:
+        if (event == MOTION_EVENT_GAME_FINISHED) {
+            transition_to(machine, MOTION_STATE_FLUID, event, now_us);
         }
         break;
 
@@ -110,6 +120,8 @@ const char *motion_state_name(motion_state_t state)
         return "SLEEP";
     case MOTION_STATE_TIME:
         return "TIME";
+    case MOTION_STATE_GAME:
+        return "GAME";
     default:
         return "UNKNOWN";
     }
@@ -130,6 +142,10 @@ const char *motion_event_name(motion_event_t event)
         return "TIME_REQUESTED";
     case MOTION_EVENT_TIME_TIMEOUT:
         return "TIME_TIMEOUT";
+    case MOTION_EVENT_GAME_REQUESTED:
+        return "GAME_REQUESTED";
+    case MOTION_EVENT_GAME_FINISHED:
+        return "GAME_FINISHED";
     default:
         return "UNKNOWN";
     }

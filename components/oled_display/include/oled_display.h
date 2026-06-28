@@ -27,6 +27,9 @@ esp_err_t oled_display_present(void);
 /* Set SSD1306 contrast. Lower values reduce brightness and power draw. */
 esp_err_t oled_display_set_contrast(uint8_t contrast);
 
+/* Turn the OLED panel output on or off without deleting its driver. */
+esp_err_t oled_display_set_power(bool on);
+
 /* Release display resources before the shared I2C bus is deleted. */
 esp_err_t oled_display_deinit(void);
 
