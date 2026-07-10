@@ -27,8 +27,11 @@
 #define GAME_OVER_MESSAGE_US 2000000LL
 #define SERVE_DELAY_US 650000LL
 #define MAX_FRAME_SECONDS 0.08f
-#define PADDLE_SPEED 82.0f
-#define CONTROL_DEAD_ZONE 0.05f
+#define PADDLE_SPEED 112.0f
+#define CONTROL_DEAD_ZONE 0.035f
+#define CONTROL_GAIN 1.18f
+#define CONTROL_FILTER_OLD_WEIGHT 0.55f
+#define CONTROL_FILTER_NEW_WEIGHT 0.45f
 
 static float clamp_float(float value, float minimum, float maximum)
 {
@@ -191,9 +194,10 @@ static void update_paddle(breakout_game_t *game,
     } else {
         game->last_activity_us = now_us;
     }
-    control = clamp_float(control, -1.0f, 1.0f);
+    control = clamp_float(control * CONTROL_GAIN, -1.0f, 1.0f);
     game->filtered_control =
-        game->filtered_control * 0.72f + control * 0.28f;
+        game->filtered_control * CONTROL_FILTER_OLD_WEIGHT +
+        control * CONTROL_FILTER_NEW_WEIGHT;
     game->paddle_x +=
         game->filtered_control * PADDLE_SPEED * frame_seconds;
     game->paddle_x =

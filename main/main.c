@@ -29,10 +29,11 @@
 
 /*
  * FLUID is the default active state, so its loop rate dominates average power.
- * A short delay plus 200 kHz I2C targets roughly 9-12 FPS. FLIP splits longer
- * frame intervals into stable 50 ms physics substeps instead of dropping time.
+ * A short delay plus 300 kHz I2C targets a smoother middle ground. FLIP splits
+ * longer frame intervals into stable 50 ms physics substeps instead of dropping
+ * time.
  */
-#define ACTIVE_FRAME_DELAY_MS 40
+#define ACTIVE_FRAME_DELAY_MS 25
 #define GAME_FRAME_DELAY_MS 40
 #define STARTUP_SCREEN_DELAY_MS 1000
 #define MICROSECONDS_PER_SECOND 1000000.0f

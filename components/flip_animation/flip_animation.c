@@ -35,9 +35,11 @@
 #define FLIP_BLEND_RATIO 0.92f
 #define FLIP_PRESSURE_OVER_RELAXATION 1.70f
 
-#define FLIP_GRAVITY_PIXELS_PER_SECOND_SQUARED 360.0f
+/* Tilt acceleration controls how quickly particles pick up speed. */
+#define FLIP_GRAVITY_PIXELS_PER_SECOND_SQUARED 540.0f
 #define FLIP_PARTICLE_DAMPING 0.998f
-#define FLIP_MAX_SPEED_PIXELS_PER_SECOND 300.0f
+/* Keep the speed cap high enough for the stronger tilt response to be visible. */
+#define FLIP_MAX_SPEED_PIXELS_PER_SECOND 450.0f
 #define FLIP_PARTICLE_MIN_DISTANCE 4.00f
 #define FLIP_RENDER_RADIUS_PIXELS 5
 #define FLIP_WALL_MARGIN 0.50f
@@ -720,18 +722,46 @@ static void log_profile_if_due(void)
 
 static void draw_particle_sprite(int center_x, int center_y)
 {
+    static const int8_t blocky_grain_offsets[][2] = {
+        {-2, -FLIP_RENDER_RADIUS_PIXELS},
+        {-1, -FLIP_RENDER_RADIUS_PIXELS},
+        {0, -FLIP_RENDER_RADIUS_PIXELS},
+        {1, -FLIP_RENDER_RADIUS_PIXELS},
+        {2, -FLIP_RENDER_RADIUS_PIXELS},
+        {-4, -4}, {-2, -4}, {0, -4}, {2, -4}, {4, -4},
+        {-4, -3}, {-1, -3}, {1, -3}, {4, -3},
+        {-FLIP_RENDER_RADIUS_PIXELS, -2}, {-3, -2},
+        {-1, -2}, {1, -2}, {3, -2},
+        {FLIP_RENDER_RADIUS_PIXELS, -2},
+        {-FLIP_RENDER_RADIUS_PIXELS, -1}, {-2, -1},
+        {0, -1}, {2, -1}, {FLIP_RENDER_RADIUS_PIXELS, -1},
+        {-FLIP_RENDER_RADIUS_PIXELS, 0}, {-3, 0}, {-1, 0},
+        {1, 0}, {3, 0}, {FLIP_RENDER_RADIUS_PIXELS, 0},
+        {-FLIP_RENDER_RADIUS_PIXELS, 1}, {-2, 1},
+        {0, 1}, {2, 1}, {FLIP_RENDER_RADIUS_PIXELS, 1},
+        {-FLIP_RENDER_RADIUS_PIXELS, 2}, {-3, 2},
+        {-1, 2}, {1, 2}, {3, 2},
+        {FLIP_RENDER_RADIUS_PIXELS, 2},
+        {-4, 3}, {-1, 3}, {1, 3}, {4, 3},
+        {-4, 4}, {-2, 4}, {0, 4}, {2, 4}, {4, 4},
+        {-2, FLIP_RENDER_RADIUS_PIXELS},
+        {-1, FLIP_RENDER_RADIUS_PIXELS},
+        {0, FLIP_RENDER_RADIUS_PIXELS},
+        {1, FLIP_RENDER_RADIUS_PIXELS},
+        {2, FLIP_RENDER_RADIUS_PIXELS},
+    };
+
     /*
-     * The physics particle is still one coordinate. The radius controls only
-     * how large that coordinate appears on the 1-bit OLED framebuffer.
+     * Pixel-art rounded square with a light checker texture. It stays blocky,
+     * but avoids the heavy filled 11 by 11 sprite box.
      */
-    for (int y = center_y - FLIP_RENDER_RADIUS_PIXELS;
-         y <= center_y + FLIP_RENDER_RADIUS_PIXELS;
-         ++y) {
-        for (int x = center_x - FLIP_RENDER_RADIUS_PIXELS;
-             x <= center_x + FLIP_RENDER_RADIUS_PIXELS;
-             ++x) {
-            oled_display_set_pixel(x, y, true);
-        }
+    for (size_t index = 0;
+         index < sizeof(blocky_grain_offsets) /
+                     sizeof(blocky_grain_offsets[0]);
+         ++index) {
+        oled_display_set_pixel(center_x + blocky_grain_offsets[index][0],
+                               center_y + blocky_grain_offsets[index][1],
+                               true);
     }
 }
 

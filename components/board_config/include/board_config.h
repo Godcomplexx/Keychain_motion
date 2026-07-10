@@ -21,10 +21,10 @@
 #define BOARD_I2C_SCL_GPIO 6
 #define BOARD_I2C_PORT 0
 /*
- * Use 200 kHz for a more responsive full-frame OLED update while retaining
- * margin below the 400 kHz rate that caused occasional breadboard NACKs.
+ * Experimental smoother OLED mode. If breadboard wiring reports occasional
+ * NACKs, drop this back to 200 kHz before debugging higher-level rendering.
  */
-#define BOARD_I2C_FREQUENCY_HZ 200000
+#define BOARD_I2C_FREQUENCY_HZ 300000
 
 /* MPU-6050 uses 0x68 when AD0 is low and 0x69 when AD0 is high. */
 #define BOARD_MPU6050_I2C_ADDRESS 0x68
