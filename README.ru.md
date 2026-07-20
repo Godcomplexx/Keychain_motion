@@ -130,9 +130,9 @@ phone_sync (NimBLE)
 
 ## Галерея
 
-| Демонстрация движения | Концепт-рендер |
-|---|---|
-| <img src="docs/assets/demo.gif" alt="Демонстрация SmartMotion Keychain" width="360"> | <img src="docs/assets/prototype.webp" alt="Концепт-рендер SmartMotion Keychain" width="360"> |
+| Демонстрация движения | Концепт-рендер | ASCII-эффект частиц |
+|---|---|---|
+| <img src="docs/assets/demo.gif" alt="Демонстрация SmartMotion Keychain" width="240"> | <img src="docs/assets/prototype.webp" alt="Концепт-рендер SmartMotion Keychain" width="240"> | <img src="docs/assets/ascii-magic.png" alt="ASCII-эффект частиц SmartMotion Keychain" width="240"> |
 
 Сейчас материалы показывают интерактивную концепцию и направление дизайна
 корпуса. Фотографии собранной электроники будут добавлены после интеграции

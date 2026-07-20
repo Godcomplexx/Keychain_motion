@@ -129,9 +129,9 @@ The complete execution model, BLE command flow, and design invariants are in
 
 ## Gallery
 
-| Motion demo | Concept render |
-|---|---|
-| <img src="docs/assets/demo.gif" alt="SmartMotion Keychain motion demo" width="360"> | <img src="docs/assets/prototype.webp" alt="SmartMotion Keychain concept render" width="360"> |
+| Motion demo | Concept render | ASCII particle effect |
+|---|---|---|
+| <img src="docs/assets/demo.gif" alt="SmartMotion Keychain motion demo" width="240"> | <img src="docs/assets/prototype.webp" alt="SmartMotion Keychain concept render" width="240"> | <img src="docs/assets/ascii-magic.png" alt="SmartMotion Keychain ASCII particle effect" width="240"> |
 
 The current media shows the interaction concept and enclosure direction.
 Photographs of the assembled electronics will be added after enclosure
