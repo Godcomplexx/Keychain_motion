@@ -17,9 +17,9 @@ It started as a Tamagotchi-like keychain idea: a small physical object that
 reacts to movement, falls asleep when left still, wakes up when picked up,
 shows useful information, and turns into a miniature motion-controlled game.
 
-![SmartMotion Keychain demo](docs/assets/demo.gif)
-
-![SmartMotion Keychain — ASCII particle effect](docs/assets/ascii-magic.png)
+| | |
+|---|---|
+| <img src="docs/assets/demo.gif" alt="SmartMotion Keychain demo" width="360"> | <img src="docs/assets/ascii-magic.png" alt="SmartMotion Keychain — ASCII particle effect" width="360"> |
 
 | | |
 |---|---|

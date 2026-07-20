@@ -18,9 +18,9 @@ OLED-дисплеем и датчиком движения MPU-6050. Он реа
 который ощущает движение, оживает в руках, засыпает в покое и объединяет
 embedded-прошивку, электронику и мобильное приложение.
 
-![Демонстрация SmartMotion Keychain](docs/assets/demo.gif)
-
-![SmartMotion Keychain — ASCII-эффект частиц](docs/assets/ascii-magic.png)
+| | |
+|---|---|
+| <img src="docs/assets/demo.gif" alt="Демонстрация SmartMotion Keychain" width="360"> | <img src="docs/assets/ascii-magic.png" alt="SmartMotion Keychain — ASCII-эффект частиц" width="360"> |
 
 | | |
 |---|---|
