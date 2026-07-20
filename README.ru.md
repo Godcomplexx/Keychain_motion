@@ -20,6 +20,8 @@ embedded-прошивку, электронику и мобильное прил
 
 ![Демонстрация SmartMotion Keychain](docs/assets/demo.gif)
 
+![SmartMotion Keychain — ASCII-эффект частиц](docs/assets/ascii-magic.png)
+
 | | |
 |---|---|
 | **Статус** | Рабочий аппаратный прототип |

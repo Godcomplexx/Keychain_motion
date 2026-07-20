@@ -19,6 +19,8 @@ shows useful information, and turns into a miniature motion-controlled game.
 
 ![SmartMotion Keychain demo](docs/assets/demo.gif)
 
+![SmartMotion Keychain — ASCII particle effect](docs/assets/ascii-magic.png)
+
 | | |
 |---|---|
 | **Status** | Functional hardware prototype |
