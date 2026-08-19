@@ -1,0 +1,16 @@
+#include <zephyr/dt-bindings/i2c/i2c.h>
+
+/ {
+    aliases {
+        keychain-i2c = &i2c1;
+    };
+};
+
+/*
+ * XIAO's board definition maps i2c1 to the labelled D4/SDA and D5/SCL pins.
+ * Both external modules use this bus and are distinguished by address.
+ */
+&i2c1 {
+    status = "okay";
+    clock-frequency = <I2C_BITRATE_FAST>;
+};

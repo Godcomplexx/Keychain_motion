@@ -1,0 +1,37 @@
+/*
+ * Devicetree for MCUboot on the E73 keychain PCB.
+ *
+ * Two changes to the DK board definition:
+ *   - uart0 is removed. The DK routes it to P0.06 and P0.08, which are the I2C
+ *     bus on this PCB; a push-pull TX output there fights the open-drain bus.
+ *   - a CDC ACM instance is added, because serial recovery talks over the
+ *     board's USB-C connector and the DK devicetree defines no such node.
+ */
+
+#include "../dts/e73_partitions.dtsi"
+
+/ {
+    chosen {
+        /*
+         * The stock board map points code-partition at slot0, which would link
+         * the bootloader into the application slot. MCUboot itself lives at 0.
+         */
+        zephyr,code-partition = &boot_partition;
+
+        /delete-property/ zephyr,console;
+        /delete-property/ zephyr,shell-uart;
+        /delete-property/ zephyr,uart-mcumgr;
+        /delete-property/ zephyr,bt-mon-uart;
+        /delete-property/ zephyr,bt-c2h-uart;
+    };
+};
+
+&uart0 {
+    status = "disabled";
+};
+
+&zephyr_udc0 {
+    cdc_acm_uart0: cdc_acm_uart0 {
+        compatible = "zephyr,cdc-acm-uart";
+    };
+};

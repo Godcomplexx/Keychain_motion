@@ -1,0 +1,40 @@
+/*
+ * Flash layout for the E73 keychain PCB, shared by MCUboot and the application.
+ * Both must agree on this map exactly, which is why it lives in one file.
+ *
+ *   0x000000  mcuboot   64 KB   serial recovery over USB CDC needs ~58 KB,
+ *                               so the stock 48 KB boot partition is too small
+ *   0x010000  image-0  448 KB   the running application
+ *   0x080000  image-1  448 KB   upload target for future swap-based updates
+ *   0x0F0000  storage   64 KB
+ */
+
+&flash0 {
+	partitions {
+		/* Replace the stock nrf52840_partition.dtsi map. */
+		/delete-node/ partition@0;
+		/delete-node/ partition@c000;
+		/delete-node/ partition@82000;
+		/delete-node/ partition@f8000;
+
+		boot_partition: partition@0 {
+			label = "mcuboot";
+			reg = <0x00000000 0x00010000>;
+		};
+
+		slot0_partition: partition@10000 {
+			label = "image-0";
+			reg = <0x00010000 0x00070000>;
+		};
+
+		slot1_partition: partition@80000 {
+			label = "image-1";
+			reg = <0x00080000 0x00070000>;
+		};
+
+		storage_partition: partition@f0000 {
+			label = "storage";
+			reg = <0x000f0000 0x00010000>;
+		};
+	};
+};

@@ -1,0 +1,113 @@
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/adc/nrf-saadc.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+
+#include "../dts/e73_partitions.dtsi"
+
+/*
+ * Final Gerber target: EBYTE E73-2G4M08S1C.
+ * U4 pin 14 = P0.06/SCL, U4 pin 16 = P0.08/SDA.
+ */
+/ {
+    aliases {
+        keychain-i2c = &i2c0;
+    };
+};
+
+&pinctrl {
+    keychain_i2c_default: keychain_i2c_default {
+        group1 {
+            psels = <NRF_PSEL(TWIM_SCL, 0, 6)>,
+                    <NRF_PSEL(TWIM_SDA, 0, 8)>;
+            bias-pull-up;
+        };
+    };
+
+    keychain_i2c_sleep: keychain_i2c_sleep {
+        group1 {
+            psels = <NRF_PSEL(TWIM_SCL, 0, 6)>,
+                    <NRF_PSEL(TWIM_SDA, 0, 8)>;
+            low-power-enable;
+        };
+    };
+};
+
+&i2c0 {
+    compatible = "nordic,nrf-twim";
+    status = "okay";
+    clock-frequency = <I2C_BITRATE_FAST>;
+    pinctrl-0 = <&keychain_i2c_default>;
+    pinctrl-1 = <&keychain_i2c_sleep>;
+    pinctrl-names = "default", "sleep";
+};
+
+/*
+ * The nrf52840dk console UART claims TX on P0.06 and RX on P0.08 - exactly the
+ * two pins this PCB wires to I2C. Its push-pull TX output fights the open-drain
+ * bus, so no device can ever acknowledge. The E73 PCB exposes no UART pins at
+ * all, so the controller is removed from this build entirely.
+ */
+&uart0 {
+    status = "disabled";
+};
+
+/*
+ * The PCB does route USB-C to the module, so the console and the 1200-baud
+ * update request both live on a USB CDC port instead. The DK devicetree has no
+ * such node, so it is declared here.
+ */
+&zephyr_udc0 {
+    cdc_acm_uart0: cdc_acm_uart0 {
+        compatible = "zephyr,cdc-acm-uart";
+    };
+};
+
+/ {
+    chosen {
+        zephyr,console = &cdc_acm_uart0;
+        /delete-property/ zephyr,shell-uart;
+        /delete-property/ zephyr,uart-mcumgr;
+        /delete-property/ zephyr,bt-mon-uart;
+        /delete-property/ zephyr,bt-c2h-uart;
+    };
+
+    /*
+     * BAT_SENSE reaches U4 pin 7, which the EBYTE manual maps to P0.02 / AIN0.
+     * The R17/R18 divider sits between the cell and this pin.
+     */
+    zephyr,user {
+        io-channels = <&adc 0>;
+    };
+
+    /*
+     * ACC_INT1 reaches U4 pin 22 = P0.07. The LIS2DW12 drives it on wake-up.
+     * A pull-down keeps the input quiet while the sensor is not soldered.
+     */
+    keychain_inputs {
+        compatible = "gpio-keys";
+
+        accel_int: accel_int {
+            gpios = <&gpio0 7 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+            label = "ACC_INT1";
+        };
+    };
+};
+
+&adc {
+    status = "okay";
+    #address-cells = <1>;
+    #size-cells = <0>;
+
+    channel@0 {
+        reg = <0>;
+        /* Gain 1/6 against the 0.6 V internal reference gives a 3.6 V span,
+         * comfortably above the ~2.1 V a halved full cell produces. */
+        zephyr,gain = "ADC_GAIN_1_6";
+        zephyr,reference = "ADC_REF_INTERNAL";
+        zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+        zephyr,input-positive = <NRF_SAADC_AIN0>;
+        zephyr,resolution = <12>;
+    };
+};

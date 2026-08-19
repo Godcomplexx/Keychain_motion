@@ -1,0 +1,9 @@
+build*/
+
+# MCUboot signing key. A private key in a public repository authenticates
+# nothing, which is exactly the problem with MCUboot's own published key.
+# Regenerate with:
+#   imgtool keygen -k mcuboot/keychain-dev-rsa-2048.pem -t rsa-2048
+# A new key means the bootloader must be reinstalled over SWD, because the
+# public half is compiled into it.
+mcuboot/*.pem

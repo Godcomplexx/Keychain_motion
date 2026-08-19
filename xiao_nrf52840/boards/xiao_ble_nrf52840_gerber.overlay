@@ -1,0 +1,40 @@
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+
+/*
+ * Transitional image for a programmed XIAO nRF52840 SoC that will be moved
+ * to the Gerber hardware.  Keep XIAO's USB bootloader flash layout, but route
+ * the application I2C bus exactly like U4 in Gerber_PCBkey_cat.zip:
+ * U4 pin 14 = P0.06/SCL and U4 pin 16 = P0.08/SDA.
+ */
+/ {
+    aliases {
+        keychain-i2c = &i2c1;
+    };
+};
+
+&pinctrl {
+    keychain_usb_gerber_i2c_default: keychain_usb_gerber_i2c_default {
+        group1 {
+            psels = <NRF_PSEL(TWIM_SCL, 0, 6)>,
+                    <NRF_PSEL(TWIM_SDA, 0, 8)>;
+            bias-pull-up;
+        };
+    };
+
+    keychain_usb_gerber_i2c_sleep: keychain_usb_gerber_i2c_sleep {
+        group1 {
+            psels = <NRF_PSEL(TWIM_SCL, 0, 6)>,
+                    <NRF_PSEL(TWIM_SDA, 0, 8)>;
+            low-power-enable;
+        };
+    };
+};
+
+&i2c1 {
+    status = "okay";
+    clock-frequency = <I2C_BITRATE_FAST>;
+    pinctrl-0 = <&keychain_usb_gerber_i2c_default>;
+    pinctrl-1 = <&keychain_usb_gerber_i2c_sleep>;
+    pinctrl-names = "default", "sleep";
+};

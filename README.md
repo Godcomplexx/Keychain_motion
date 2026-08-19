@@ -2,20 +2,26 @@
 
 # SmartMotion Keychain
 
-[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-6.0.1-E7352C?style=flat-square&logo=espressif)](https://github.com/espressif/esp-idf)
-[![Target](https://img.shields.io/badge/target-ESP32--C3-111111?style=flat-square&logo=espressif)](https://www.espressif.com/en/products/socs/esp32-c3)
+[![v1](https://img.shields.io/badge/v1-ESP--IDF%206.0.1%20%C2%B7%20ESP32--C3-E7352C?style=flat-square&logo=espressif&logoColor=white)](https://github.com/espressif/esp-idf)
+[![v2](https://img.shields.io/badge/v2-Zephyr%204.2%20%C2%B7%20nRF52840-00A9CE?style=flat-square&logo=nordicsemiconductor&logoColor=white)](xiao_nrf52840)
 [![Firmware](https://img.shields.io/badge/firmware-C-00599C?style=flat-square&logo=c)](main/main.c)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](android_time_sync)
 [![BLE](https://img.shields.io/badge/BLE-on--demand-0082FC?style=flat-square&logo=bluetooth&logoColor=white)](docs/ARCHITECTURE.md)
+[![Updates](https://img.shields.io/badge/updates-USB--C%20%C2%B7%20SWD-6E56CF?style=flat-square)](tools/flash/README.md)
 [![Status](https://img.shields.io/badge/status-hardware%20prototype-F59E0B?style=flat-square)](docs/HARDWARE.md)
 
-A tiny motion-reactive ESP32-C3 keychain with an OLED display, an MPU-6050
-sensor, BLE time synchronization, low-power behavior, and a tilt-controlled
-Breakout game.
+A tiny motion-reactive keychain with an OLED display, BLE time synchronization
+from an Android phone, low-power behavior, and a tilt-controlled Breakout game.
 
 It started as a Tamagotchi-like keychain idea: a small physical object that
 reacts to movement, falls asleep when left still, wakes up when picked up,
 shows useful information, and turns into a miniature motion-controlled game.
+
+The project exists in two firmware versions. **Version 1** is the ESP32-C3
+prototype that established the behavior on a breadboard. **Version 2** runs on
+a custom nRF52840 board and replaces the fixed screens with a procedural
+character that has moods, blinks, invents small activities when left alone, and
+remembers recent interaction.
 
 | | |
 |---|---|
@@ -24,7 +30,8 @@ shows useful information, and turns into a miniature motion-controlled game.
 | | |
 |---|---|
 | **Status** | Functional hardware prototype |
-| **Firmware** | ESP-IDF 6.0.1 / ESP32-C3 |
+| **v1 firmware** | ESP-IDF 6.0.1 / ESP32-C3 |
+| **v2 firmware** | Zephyr 4.2 / nRF52840 on a custom PCB |
 | **Companion app** | Android 8.0+ |
 | **Display** | 0.96-inch 128x64 OLED |
 
@@ -35,6 +42,160 @@ a utility and more like a tiny digital object with its own behavior. I used it
 to explore embedded firmware architecture, motion sensing, BLE communication,
 low-power design, Android integration, and early product prototyping in one
 connected system.
+
+---
+
+# Version 2 — Current
+
+A procedural companion on a custom PCB. Version 1, further down this page, used
+four fixed screens selected by a motion state machine; version 2 replaces them
+with a character.
+
+## The Software
+
+The screen is no longer chosen by "which mode is active" but by "what is the
+character doing, and what is allowed to interrupt it". Every frame is computed
+from a behavior identifier and how long it has been running, so there are no
+sprite sheets and a new mood costs one `switch` case.
+
+```text
+event  ->  priority P0..P3  ->  behavior  ->  animation
+```
+
+| Component | Responsibility |
+|---|---|
+| `pet_behavior` | events, priorities, wrap-safe timers, interaction memory. Plain C, no RTOS types |
+| `pet_face` | procedural eyes: size, lids, gaze, blinking, overlays. Knows nothing about events |
+
+Inputs are deliberately of two kinds. **Events** happen once and are posted:
+shaken, picked up, charger attached, phone synced. **Context** is level-triggered
+and passed every tick: sensor present, charging, battery level. Sending a level
+condition as an event is the classic bug - the animation restarts every tick and
+never finishes.
+
+| Event | Reaction | Priority |
+|---|---|---:|
+| picked up after stillness | eyes snap open, glance up | P1 |
+| tilted left / right | the gaze eases across and returns | P1 |
+| shaken | eyes go wide, the face hops | P1 |
+| shaken again within 5 s | slanted brows and a short tremble | P1 |
+| charger attached | happy arcs and sparkles, then a battery gauge | P1 |
+| phone synced the clock | a nod, then visible pleasure | P1 |
+| BLE window open | the eyes track a scanning line | P1 |
+| left alone 30 s | bored: smaller eyes, wandering gaze, slow sighs | P2 |
+| left alone 5 min | asleep: eye slits and rising `z` | P2 |
+| left alone longer | one self-directed activity | P3 |
+
+A higher priority interrupts a lower one immediately and is never pushed aside
+by it. Any deliberate interaction cancels a P3 activity in the same tick.
+
+**The FLIP particle animation was not removed**, but it is worth being precise
+about what that means. It became one of the things the pet does when left alone,
+alongside stargazing and letting its gaze wander.
+
+*How to see it:* it is always the first activity after power-up. Switch the board
+on and leave it alone for about twenty seconds. After that the three activities
+alternate, so which one appears next is not something you choose - there is
+currently no gesture or command that summons the particles on demand.
+
+*It still depends on the accelerometer.* Without a sensor the particles are
+driven by a synthetic tilt sweep: they move, but they react to nothing, which is
+a demonstration rather than the version 1 behavior. Soldering the LIS2DW12
+restores real tilt with no firmware change.
+
+**Interaction memory.** A `bond` value of 0-100 rises with handling and decays
+over hours. A higher bond widens the eyes slightly, blinks a little more often,
+delays boredom and makes self-directed activities start sooner. The pet becomes
+visibly livelier when it is used, and calms down again when it is not.
+
+**It stays alive without the accelerometer.** With no sensor present, deep sleep
+is disabled - nothing could wake the face again, and a frozen screen reads as a
+crash - and self-directed activities are scheduled far more often so something
+is always happening. Soldering the sensor later needs no firmware change.
+
+Time synchronization with the Android app and the tilt-controlled Breakout are
+unchanged from version 1.
+
+## Hardware and Updates
+
+Version 2 runs on a 40 mm round two-layer PCB built around an EBYTE
+E73-2G4M08S1C module, with a LIS2DW12 accelerometer at `0x18`, USB-C, a LiPo
+charger and a power switch. The module carries no factory bootloader, so the
+first firmware goes in over SWD through connector `J3`.
+
+The firmware uses four board signals: I2C on `P0.06`/`P0.08`, battery sense on
+`P0.02` (`AIN0`) behind the `R17`/`R18` divider, the accelerometer interrupt on
+`P0.07`, and charger detection through the SoC's own `USBREGSTATUS` register,
+which answers even for a charger that never enumerates. The module pin mapping
+comes from the EBYTE manual and was cross-checked against the Gerber netlist;
+the table is in [xiao_nrf52840/README.md](xiao_nrf52840/README.md).
+
+```text
+0x000000  mcuboot   64 KB
+0x010000  image-0  448 KB   the running application
+0x080000  image-1  448 KB
+0x0F0000  storage   64 KB
+```
+
+The board has no RESET button, so DFU is not entered by holding anything. The
+application receives a 1200-baud touch on its USB serial port, writes a
+boot-mode flag into a register that survives the reset, and MCUboot reads it and
+starts serial recovery instead of booting.
+
+The same change gave the board a console it never had: behavior transitions now
+come out of the USB-C connector.
+
+```text
+I (oled): SSD1306 ready at 0x3C
+I (keychain): pet: unknown -> connecting priority=P1 bond=0
+I (keychain): pet: connecting -> charging priority=P2 bond=0
+```
+
+## Build and Flash
+
+Requires a Zephyr 4.2 workspace with the `mcuboot`, `zcbor` and `mbedtls`
+modules, plus `pip install pyocd hidapi smpmgr`.
+
+```powershell
+# one time, over SWD: erase, install MCUboot and the signed application
+python tools/flash/flash_nrf52840.py bootstrap
+
+# every update after that, over the board's own USB-C connector
+python tools/flash/usb_update.py
+
+# read chip identity, lock state and which image is executing
+python tools/flash/flash_nrf52840.py info
+```
+
+The exact CMake invocations for the bootloader and the signed application, the
+pyOCD workaround needed to reach Nordic's CTRL-AP through an ST-Link, and the
+diagnostics are in [tools/flash/README.md](tools/flash/README.md). Firmware
+details for the port are in [xiao_nrf52840/README.md](xiao_nrf52840/README.md).
+
+## What Version 2 Does Not Do Yet
+
+- The accelerometer is not soldered on the current board, so every motion
+  reaction above is implemented and compiled but unverified on hardware.
+- A USB update cannot be rolled back. MCUboot's serial recovery is a recovery
+  mechanism rather than an update one: it keeps no slot state, so marking an
+  image as a test does nothing and writing either slot produces a permanent
+  image. Verified on hardware. Real test-and-revert needs an SMP server in the
+  application itself; half of that already exists, since the application calls
+  `boot_write_img_confirmed()` once it has started successfully.
+- The gauge shows voltage, not charge. Charging current lifts the terminal
+  voltage, so the percentage reads roughly eight points high while the charger
+  is attached. Readings are smoothed, which hides the jitter but not that
+  systematic error: an honest level needs the cable unplugged.
+- The method is inherently touchy: a hundred millivolts halves the charge in the
+  middle of a LiPo curve, so anything between 30% and 60% is an estimate rather
+  than a measurement.
+
+---
+
+# Version 1 — ESP32-C3 Prototype
+
+The original breadboard prototype. It still builds and runs, and it is where the
+motion behavior, the BLE protocol and the Android app were developed.
 
 ## Highlights
 
@@ -127,25 +288,10 @@ main state machine
 The complete execution model, BLE command flow, and design invariants are in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Gallery
+## Build and Flash
 
-| Motion demo | Concept render | ASCII particle effect |
-|---|---|---|
-| <img src="docs/assets/demo.gif" alt="SmartMotion Keychain motion demo" width="240"> | <img src="docs/assets/prototype.webp" alt="SmartMotion Keychain concept render" width="240"> | <img src="docs/assets/ascii-magic.png" alt="SmartMotion Keychain ASCII particle effect" width="240"> |
-
-The current media shows the interaction concept and enclosure direction.
-Photographs of the assembled electronics will be added after enclosure
-integration.
-
-## Quick Start
-
-### Requirements
-
-- ESP-IDF 6.0.1 with the ESP32-C3 toolchain.
-- Python, CMake, and Ninja managed by ESP-IDF.
-- Android Studio with JDK 17 and Android SDK 35 for the companion app.
-
-### Build and Flash
+Requires ESP-IDF 6.0.1 with the ESP32-C3 toolchain, and Python, CMake and Ninja
+managed by ESP-IDF.
 
 ```powershell
 git clone https://github.com/Godcomplexx/Keychain_motion.git
@@ -166,43 +312,6 @@ i2c_bus: Found I2C device at address 0x3C
 i2c_bus: Found I2C device at address 0x68
 i2c_bus: I2C scan complete: 2 device(s) found
 ```
-
-## Android Companion App
-
-Build from Android Studio by opening `android_time_sync`, or use:
-
-```powershell
-cd android_time_sync
-$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
-.\gradlew.bat assembleDebug
-```
-
-The APK is generated at:
-
-```text
-android_time_sync/app/build/outputs/apk/debug/app-debug.apk
-```
-
-### Auto Sync
-
-1. Grant Bluetooth and notification permissions.
-2. Tap `Start auto sync`.
-3. Perform a triple shake.
-4. The app discovers `KeychainSync`, sends local phone time, and disconnects.
-
-Background synchronization uses Android's low-power BLE scan mode. Explicit
-manual commands use the faster balanced mode.
-
-### Breakout
-
-1. Tap `Start Breakout`.
-2. Perform a triple shake.
-3. The phone sends `GAME:START`.
-4. BLE powers down and gameplay continues locally.
-5. Tilt the keychain left and right to move the paddle.
-
-Breakout has three lives, generated levels, increasing speed, and no fixed
-active-play time limit. It exits after five minutes without paddle input.
 
 ## Power Model
 
@@ -242,15 +351,76 @@ Hardware checklist:
 - Auto Sync updates the clock;
 - BLE powers down after time or game commands.
 
+---
+
+# Shared Across Both Versions
+
+## Android Companion App
+
+The BLE GATT protocol is identical on both firmware versions, so the same app
+drives either board.
+
+Build from Android Studio by opening `android_time_sync`, or use:
+
+```powershell
+cd android_time_sync
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+.\gradlew.bat assembleDebug
+```
+
+The APK is generated at:
+
+```text
+android_time_sync/app/build/outputs/apk/debug/app-debug.apk
+```
+
+### Auto Sync
+
+1. Grant Bluetooth and notification permissions.
+2. Tap `Start auto sync`.
+3. Perform a triple shake.
+4. The app discovers `KeychainSync`, sends local phone time, and disconnects.
+
+Background synchronization uses Android's low-power BLE scan mode. Explicit
+manual commands use the faster balanced mode.
+
+### Breakout
+
+1. Tap `Start Breakout`.
+2. Perform a triple shake.
+3. The phone sends `GAME:START`.
+4. BLE powers down and gameplay continues locally.
+5. Tilt the keychain left and right to move the paddle.
+
+Breakout has three lives, generated levels, increasing speed, and no fixed
+active-play time limit. It exits after five minutes without paddle input.
+
+## Gallery
+
+| Motion demo | Concept render | ASCII particle effect |
+|---|---|---|
+| <img src="docs/assets/demo.gif" alt="SmartMotion Keychain motion demo" width="240"> | <img src="docs/assets/prototype.webp" alt="SmartMotion Keychain concept render" width="240"> | <img src="docs/assets/ascii-magic.png" alt="SmartMotion Keychain ASCII particle effect" width="240"> |
+
+The current media shows the interaction concept and enclosure direction.
+Photographs of the assembled electronics will be added after enclosure
+integration.
+
 ## Documentation
 
 - [Architecture and software design](docs/ARCHITECTURE.md)
 - [Hardware, wiring, power, and diagnostics](docs/HARDWARE.md)
+- [nRF52840 port and companion behavior](xiao_nrf52840/README.md)
+- [Flashing, USB updates and diagnostics](tools/flash/README.md)
 
 ## Roadmap and Known Limitations
 
+- Solder the LIS2DW12 and verify every motion reaction on the version 2 board.
+- Configure an ADC channel on `BAT_SENSE` so the battery gauge shows a real
+  level and the low-battery mood can trigger.
+- Declare the `ACC_INT1` interrupt so hardware wake-up works on version 2.
+- Generate a private MCUboot signing key instead of the published development
+  key.
 - Measure current in every operating mode and publish real battery-life data.
 - Calibrate step counting for different keychain orientations.
-- Add automated host-side tests for state and game logic.
-- Add repeatable hardware-in-the-loop checks for OLED, MPU-6050, and BLE.
+- Add automated host-side tests for state, behavior and game logic.
 - Prepare a release-signed Android build if the companion app is distributed.
