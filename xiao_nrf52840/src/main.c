@@ -317,6 +317,7 @@ int main(void)
     bool sensorless_ble_announced = false;
     int64_t last_battery_sample_us = 0;
     uint8_t battery_percent = BATTERY_PERCENT_UNKNOWN;
+    int32_t battery_millivolts = 0;
     pet_behavior_id_t previous_pet_id = PET_ID_COUNT;
 
     device_clock_t clock;
@@ -645,6 +646,7 @@ int main(void)
             battery_reading_t reading;
             if (battery_sample(&reading)) {
                 battery_percent = reading.percent;
+                battery_millivolts = reading.cell_millivolts;
                 /* The pin figure is what the divider ratio is corrected from. */
                 ESP_LOGI(TAG, "Battery: pin=%d mV cell=%d mV -> %u%%",
                          reading.pin_millivolts, reading.cell_millivolts,
@@ -656,6 +658,7 @@ int main(void)
             .sensor_present = mpu6050_is_available(),
             .charging = charger_attached,
             .battery_percent = battery_percent,
+            .battery_millivolts = battery_millivolts,
         };
         pet_behavior_update(&pet, &pet_context, now_ms);
         const pet_view_t *pet_view = pet_behavior_view(&pet);

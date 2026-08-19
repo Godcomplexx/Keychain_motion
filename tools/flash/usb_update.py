@@ -2,22 +2,27 @@
 """
 Update the keychain over its own USB-C connector, without a debug probe.
 
-    python tools/flash/usb_update.py
-    python tools/flash/usb_update.py --build build-e73-mcuboot --confirm
+    python tools/flash/usb_update.py                    # normal, revertible
+    python tools/flash/usb_update.py --via-bootloader   # recovery route
+    python tools/flash/usb_update.py --confirm          # skip the trial boot
 
-The sequence is:
+There are two routes, and they behave differently:
 
-  1. find the running application's CDC port and open it at 1200 baud;
-     the firmware treats that as "please reboot into the bootloader" and asks
-     MCUboot for serial recovery through the retained GPREGRET register;
-  2. wait for MCUboot's own CDC port to enumerate;
-  3. hand the signed image to smpmgr, which uploads it and resets the board.
+  through the running application (default)
+      The application exposes an SMP server on a second CDC port. The image
+      goes into the spare slot as a *test* image, MCUboot swaps it in, and the
+      application confirms itself once it has started successfully. An image
+      that cannot get that far is put back by MCUboot at the next reset.
 
-The two ports are told apart by USB product ID, so nothing has to be guessed:
-the application answers on PID 0x8044 and MCUboot on PID 0x8045.
+  through the bootloader (--via-bootloader)
+      Opening the console port at 1200 baud asks the application to reboot into
+      MCUboot serial recovery. That path keeps no slot state, so whatever is
+      uploaded becomes permanent immediately - there is no way back except SWD.
+      It exists for when the application no longer runs.
 
-Serial recovery writes slot0 in place, so the upload is permanent immediately
-and there is no rollback: a broken image needs SWD to recover.
+Both CDC ports of the application share one USB VID/PID, so they are told apart
+by USB interface number: MI_00 is the console, MI_02 is the SMP server. The
+bootloader is a different product ID entirely.
 """
 import argparse
 import os
@@ -35,23 +40,29 @@ USB_VID = 0x2886
 APP_PID = 0x8044
 BOOTLOADER_PID = 0x8045
 
+CONSOLE_INTERFACE = "MI_00"
+SMP_INTERFACE = "MI_02"
+
 TOUCH_BAUD_RATE = 1200
 
 
-def find_port(pid, timeout_s=0.0):
-    """Return the COM port exposing the given product ID, or None."""
+def find_port(pid, interface=None, timeout_s=0.0):
+    """Return a matching COM port, optionally narrowed by USB interface."""
     deadline = time.time() + timeout_s
     while True:
         for info in list_ports.comports():
-            if info.vid == USB_VID and info.pid == pid:
-                return info.device
+            if info.vid != USB_VID or info.pid != pid:
+                continue
+            if interface and interface not in (info.hwid or "").upper():
+                continue
+            return info.device
         if time.time() >= deadline:
             return None
         time.sleep(0.25)
 
 
 def touch_1200_baud(port):
-    """Open and close the port at 1200 baud to request the bootloader."""
+    """Open and close the console port at 1200 baud to request the bootloader."""
     try:
         with serial.Serial(port, TOUCH_BAUD_RATE, timeout=0.2, dsrdtr=False):
             time.sleep(0.15)
@@ -61,20 +72,64 @@ def touch_1200_baud(port):
         pass
 
 
+def run_smpmgr(port, image, slot, confirm):
+    command = [sys.executable, "-m", "smpmgr", "--port", port,
+               "upgrade", image, "--slot", str(slot)]
+    if confirm:
+        command.append("--confirm")
+    print("running:", " ".join(command))
+    return subprocess.call(command)
+
+
+def update_via_application(image, confirm):
+    smp_port = find_port(APP_PID, SMP_INTERFACE)
+    if smp_port is None:
+        return None
+
+    print("application SMP server on", smp_port)
+    if confirm:
+        print("uploading as a confirmed image - no trial boot, no revert")
+    else:
+        print("uploading to the spare slot as a test image; "
+              "the application confirms itself if it starts")
+    return run_smpmgr(smp_port, image, slot=1, confirm=confirm)
+
+
+def update_via_bootloader(image, wait_s):
+    boot_port = find_port(BOOTLOADER_PID)
+    if boot_port is None:
+        console = find_port(APP_PID, CONSOLE_INTERFACE)
+        if console is None:
+            raise SystemExit(
+                "no keychain found on USB - check that the board's USB-C cable "
+                "is connected and that the power switch SW2 is on "
+                "(the application enumerates as two COM ports)")
+        print("application console on %s; requesting bootloader ..." % console)
+        touch_1200_baud(console)
+
+        boot_port = find_port(BOOTLOADER_PID, timeout_s=wait_s)
+        if boot_port is None:
+            raise SystemExit(
+                "bootloader did not appear within %.0f s - the board may have "
+                "booted the application again" % wait_s)
+
+    print("bootloader on", boot_port)
+    print("NOTE: this route writes in place; the image cannot be reverted")
+    return run_smpmgr(boot_port, image, slot=0, confirm=False)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--build", default="build-e73-mcuboot",
                         help="build directory under xiao_nrf52840")
-    parser.add_argument("--slot", type=int, default=0, choices=(0, 1),
-                        help="0 writes the running slot in place - immediate "
-                             "and permanent. 1 uploads to the spare slot and "
-                             "lets MCUboot test-swap it, so an image that "
-                             "cannot boot is rolled back automatically")
+    parser.add_argument("--via-bootloader", action="store_true",
+                        help="use MCUboot serial recovery instead of the "
+                             "application; permanent, for when the application "
+                             "no longer starts")
     parser.add_argument("--confirm", action="store_true",
-                        help="with --slot 1, mark the image permanent up front "
-                             "instead of letting the application confirm itself "
-                             "once it has started successfully")
+                        help="mark the image permanent up front instead of "
+                             "letting it prove itself on a trial boot")
     parser.add_argument("--wait", type=float, default=20.0,
                         help="seconds to wait for the bootloader port")
     args = parser.parse_args()
@@ -83,35 +138,14 @@ def main():
     if not os.path.isfile(image):
         raise SystemExit("no signed image at %s - build it first" % image)
 
-    boot_port = find_port(BOOTLOADER_PID)
-    if boot_port:
-        print("bootloader already waiting on", boot_port)
-    else:
-        app_port = find_port(APP_PID)
-        if app_port is None:
-            # A powered-down board and an unplugged cable look identical from
-            # here, and SW2 cuts the regulator while the charger stays live, so
-            # a charging board can still be invisible. Name both causes.
-            raise SystemExit(
-                "no keychain found on USB - check that the board's USB-C cable "
-                "is connected and that the power switch SW2 is on "
-                "(the application enumerates as a COM port)")
-        print("application on %s; requesting bootloader ..." % app_port)
-        touch_1200_baud(app_port)
+    if not args.via_bootloader:
+        result = update_via_application(image, args.confirm)
+        if result is not None:
+            raise SystemExit(result)
+        print("no SMP port found on the application; "
+              "falling back to the bootloader route")
 
-        boot_port = find_port(BOOTLOADER_PID, timeout_s=args.wait)
-        if boot_port is None:
-            raise SystemExit(
-                "bootloader did not appear within %.0f s - the board may have "
-                "booted the application again" % args.wait)
-        print("bootloader on", boot_port)
-
-    command = [sys.executable, "-m", "smpmgr", "--port", boot_port,
-               "upgrade", image, "--slot", str(args.slot)]
-    if args.confirm:
-        command.append("--confirm")
-    print("running:", " ".join(command))
-    raise SystemExit(subprocess.call(command))
+    raise SystemExit(update_via_bootloader(image, args.wait))
 
 
 if __name__ == "__main__":

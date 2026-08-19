@@ -137,10 +137,23 @@ the table is in [xiao_nrf52840/README.md](xiao_nrf52840/README.md).
 0x0F0000  storage   64 KB
 ```
 
-The board has no RESET button, so DFU is not entered by holding anything. The
-application receives a 1200-baud touch on its USB serial port, writes a
-boot-mode flag into a register that survives the reset, and MCUboot reads it and
-starts serial recovery instead of booting.
+There are two update routes, and they behave differently.
+
+**Normal - through the running application.** The application exposes an SMP
+server on a second USB port. The image goes into the spare slot as a *test*
+image, MCUboot swaps it in, and the application confirms itself only if it
+started successfully. An image that never gets that far is put back by MCUboot
+at the next reset. That is the rollback.
+
+**Recovery - through the bootloader.** The board has no RESET button, so DFU is
+not entered by holding anything: the application receives a 1200-baud touch on
+its console port, writes a boot-mode flag into a register that survives the
+reset, and MCUboot reads it and starts serial recovery. That path keeps no slot
+state, so whatever is written becomes permanent immediately - it exists for when
+the application no longer starts.
+
+Both application ports live on one USB device and are told apart by interface
+number: `MI_00` is the console, `MI_02` is the SMP server.
 
 The same change gave the board a console it never had: behavior transitions now
 come out of the USB-C connector.
@@ -176,19 +189,15 @@ details for the port are in [xiao_nrf52840/README.md](xiao_nrf52840/README.md).
 
 - The accelerometer is not soldered on the current board, so every motion
   reaction above is implemented and compiled but unverified on hardware.
-- A USB update cannot be rolled back. MCUboot's serial recovery is a recovery
-  mechanism rather than an update one: it keeps no slot state, so marking an
-  image as a test does nothing and writing either slot produces a permanent
-  image. Verified on hardware. Real test-and-revert needs an SMP server in the
-  application itself; half of that already exists, since the application calls
-  `boot_write_img_confirmed()` once it has started successfully.
-- The gauge shows voltage, not charge. Charging current lifts the terminal
-  voltage, so the percentage reads roughly eight points high while the charger
-  is attached. Readings are smoothed, which hides the jitter but not that
-  systematic error: an honest level needs the cable unplugged.
-- The method is inherently touchy: a hundred millivolts halves the charge in the
-  middle of a LiPo curve, so anything between 30% and 60% is an estimate rather
-  than a measurement.
+- Update rollback is implemented but **not yet verified on hardware**: the SMP
+  server builds and the spare-slot route is written, but it cannot be exercised
+  without the board attached. Until then, treat the capability as claimed rather
+  than working.
+- Charge is measured through voltage, and that method cannot be made much
+  better: a hundred millivolts halves the charge in the middle of a LiPo curve.
+  So the display shows the volts next to the gauge - that is what is actually
+  measured - and while charging it sweeps the fill without a number, because
+  charge current lifts the voltage and any percentage would read high.
 
 ---
 

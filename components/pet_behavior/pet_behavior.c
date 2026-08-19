@@ -499,6 +499,7 @@ void pet_behavior_update(pet_behavior_t *pet,
     }
     pet->view.bond = pet->bond;
     pet->view.battery_percent = context->battery_percent;
+    pet->view.battery_millivolts = context->battery_millivolts;
     pet->view.charging = context->charging;
 }
 

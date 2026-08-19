@@ -86,6 +86,12 @@ typedef struct {
     bool charging;
     /* 0..100, or PET_BATTERY_UNKNOWN while no ADC channel exists yet. */
     uint8_t battery_percent;
+    /*
+     * Cell voltage in millivolts, 0 when unknown. The percentage is derived
+     * from it through a discharge curve, so it is an interpretation; the
+     * voltage is the thing actually measured and is worth showing as such.
+     */
+    int32_t battery_millivolts;
 } pet_context_t;
 
 #define PET_BATTERY_UNKNOWN 255U
@@ -101,6 +107,7 @@ typedef struct {
     /* Memory of recent interaction, 0..100. Higher = friendlier and livelier. */
     uint8_t bond;
     uint8_t battery_percent;
+    int32_t battery_millivolts;
     bool charging;
 } pet_view_t;
 

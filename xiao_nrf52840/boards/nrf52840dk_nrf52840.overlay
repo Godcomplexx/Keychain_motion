@@ -62,13 +62,22 @@
     cdc_acm_uart0: cdc_acm_uart0 {
         compatible = "zephyr,cdc-acm-uart";
     };
+
+    /*
+     * A second port for mcumgr. The SMP transport owns its UART completely, so
+     * sharing one port with the console would corrupt both. Two CDC instances
+     * cost one composite descriptor and keep logs readable during an update.
+     */
+    cdc_acm_uart1: cdc_acm_uart1 {
+        compatible = "zephyr,cdc-acm-uart";
+    };
 };
 
 / {
     chosen {
         zephyr,console = &cdc_acm_uart0;
+        zephyr,uart-mcumgr = &cdc_acm_uart1;
         /delete-property/ zephyr,shell-uart;
-        /delete-property/ zephyr,uart-mcumgr;
         /delete-property/ zephyr,bt-mon-uart;
         /delete-property/ zephyr,bt-c2h-uart;
     };

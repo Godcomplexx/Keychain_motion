@@ -306,6 +306,8 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
         frame->lid_depth = 13;
         frame->gaze_y = 3;
         frame->group_dy = 1 + (int)(oscillate(now_ms, 3000U) * 1.5f);
+        /* A low battery is exactly when the actual level is worth showing. */
+        frame->overlay = OVERLAY_BATTERY;
         break;
 
     case PET_CHARGING:
@@ -430,14 +432,36 @@ static void draw_overlay(const face_frame_t *frame, const pet_view_t *view,
         const int height = 9;
         draw_rect_outline(x, y, width, height);
         fill_rect(x + width, y + 3, 2, 3, true);
-        int percent = view->battery_percent;
-        if (percent == (int)PET_BATTERY_UNKNOWN) {
-            /* No ADC channel yet: animate the fill rather than invent a level. */
-            percent = (int)(phase(now_ms, 2000U) * 100.0f);
+
+        int fill;
+        if (view->charging || view->battery_percent == PET_BATTERY_UNKNOWN) {
+            /*
+             * Charging current lifts the cell voltage, so a percentage derived
+             * from it would overstate the charge by roughly eight points. Sweep
+             * the fill instead of claiming a level - the same thing a phone
+             * does, and honest about what is and is not known.
+             */
+            fill = (int)((float)(width - 4) * phase(now_ms, 2000U));
+        } else {
+            fill = ((width - 4) * view->battery_percent) / 100;
         }
-        const int fill = ((width - 4) * percent) / 100;
         if (fill > 0) {
             fill_rect(x + 2, y + 2, fill, height - 4, true);
+        }
+
+        /*
+         * The measured quantity is voltage; the percentage is an interpretation
+         * of it through a discharge curve. Showing the volts keeps the gauge
+         * from claiming more precision than the method has.
+         */
+        if (view->battery_millivolts > 0) {
+            char text[5];
+            text[0] = (char)('0' + (view->battery_millivolts / 1000) % 10);
+            text[1] = '.';
+            text[2] = (char)('0' + (view->battery_millivolts / 100) % 10);
+            text[3] = 'V';
+            text[4] = '\0';
+            oled_display_draw_text(x - 26, y + 1, text);
         }
         break;
     }
