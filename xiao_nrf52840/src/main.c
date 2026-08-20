@@ -317,6 +317,7 @@ int main(void)
     bool sensorless_ble_announced = false;
     int64_t last_battery_sample_us = 0;
     uint8_t battery_percent = BATTERY_PERCENT_UNKNOWN;
+    uint8_t last_logged_percent = BATTERY_PERCENT_UNKNOWN;
     int32_t battery_millivolts = 0;
     pet_behavior_id_t previous_pet_id = PET_ID_COUNT;
 
@@ -647,10 +648,17 @@ int main(void)
             if (battery_sample(&reading)) {
                 battery_percent = reading.percent;
                 battery_millivolts = reading.cell_millivolts;
-                /* The pin figure is what the divider ratio is corrected from. */
-                ESP_LOGI(TAG, "Battery: pin=%d mV cell=%d mV -> %u%%",
-                         reading.pin_millivolts, reading.cell_millivolts,
-                         (unsigned)reading.percent);
+                /*
+                 * Only on a change: a line every ten seconds forever buries
+                 * everything else. The pin figure is kept because that is what
+                 * the divider ratio would be corrected from.
+                 */
+                if (reading.percent != last_logged_percent) {
+                    last_logged_percent = reading.percent;
+                    ESP_LOGI(TAG, "Battery: pin=%d mV cell=%d mV -> %u%%",
+                             reading.pin_millivolts, reading.cell_millivolts,
+                             (unsigned)reading.percent);
+                }
             }
         }
 

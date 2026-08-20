@@ -26,6 +26,7 @@ bootloader is a different product ID entirely.
 """
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -40,10 +41,28 @@ USB_VID = 0x2886
 APP_PID = 0x8044
 BOOTLOADER_PID = 0x8045
 
-CONSOLE_INTERFACE = "MI_00"
-SMP_INTERFACE = "MI_02"
+CONSOLE_INTERFACE = 0
+SMP_INTERFACE = 2
 
 TOUCH_BAUD_RATE = 1200
+
+
+def interface_number(info):
+    """
+    Which USB interface a port belongs to.
+
+    Windows spells this as MI_02 inside the hardware id, but only once the
+    composite device has been enumerated that way; pyserial otherwise exposes
+    it as the trailing component of the location, as in "1-1:x.2". Both spellings
+    show up on the same machine, so both are accepted.
+    """
+    match = re.search(r"MI_(\d+)", (info.hwid or "").upper())
+    if match:
+        return int(match.group(1))
+    match = re.search(r"[.:](\d+)$", info.location or "")
+    if match:
+        return int(match.group(1))
+    return None
 
 
 def find_port(pid, interface=None, timeout_s=0.0):
@@ -53,7 +72,7 @@ def find_port(pid, interface=None, timeout_s=0.0):
         for info in list_ports.comports():
             if info.vid != USB_VID or info.pid != pid:
                 continue
-            if interface and interface not in (info.hwid or "").upper():
+            if interface is not None and interface_number(info) != interface:
                 continue
             return info.device
         if time.time() >= deadline:

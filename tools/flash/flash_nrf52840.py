@@ -169,11 +169,16 @@ def cmd_bootstrap(args):
 
 def cmd_flash(args):
     hex_file = image_path(args.build, signed=args.signed)
+    # A signed image lands in slot0 behind the MCUboot header; address 4 then
+    # belongs to the bootloader and never changes, so watch the slot instead.
+    vector_address = (SLOT0_ADDRESS + MCUBOOT_HEADER_SIZE + 4) if args.signed \
+        else 0x04
     with open_session() as session:
         target = session.target
-        before = target.read32(0x04)
+        before = target.read32(vector_address)
         print("image  :", hex_file)
-        print("reset vector before: 0x%08X" % before)
+        print("reset vector before: 0x%08X (at 0x%08X)"
+              % (before, vector_address))
 
         # The running application drives BLE and USB. It must not execute while
         # the flash algorithm runs from RAM, or the algorithm hard-faults.
@@ -181,9 +186,8 @@ def cmd_flash(args):
 
         FileProgrammer(session).program(hex_file, file_format="hex")
 
-        after = target.read32(0x04)
+        after = target.read32(vector_address)
         print("reset vector after : 0x%08X" % after)
-        print("initial SP         : 0x%08X" % target.read32(0x00))
         if after == before:
             print("WARNING: reset vector did not change - is this image new?")
 
