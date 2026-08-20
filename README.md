@@ -189,10 +189,9 @@ details for the port are in [xiao_nrf52840/README.md](xiao_nrf52840/README.md).
 
 - The accelerometer is not soldered on the current board, so every motion
   reaction above is implemented and compiled but unverified on hardware.
-- Update rollback is implemented but **not yet verified on hardware**: the SMP
-  server builds and the spare-slot route is written, but it cannot be exercised
-  without the board attached. Until then, treat the capability as claimed rather
-  than working.
+- Automatic revert has only been verified from the top: the image is seen to
+  arrive unconfirmed and to confirm itself on a successful start. A deliberately
+  broken image has not been used to provoke the revert itself.
 - Charge is measured through voltage, and that method cannot be made much
   better: a hundred millivolts halves the charge in the middle of a LiPo curve.
   So the display shows the volts next to the gauge - that is what is actually
