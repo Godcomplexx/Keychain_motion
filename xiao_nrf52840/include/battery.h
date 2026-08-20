@@ -22,6 +22,13 @@ typedef struct {
     int32_t pin_millivolts;
     /* Pin reading scaled back up to the cell, using the assumed ratio. */
     int32_t cell_millivolts;
+    /*
+     * What the cell would read with the charger off. Charge current lifts the
+     * terminal voltage, and on the steep middle of a LiPo curve that lift is
+     * worth about ten percentage points, so the percentage is derived from
+     * this rather than from the raw reading.
+     */
+    int32_t resting_millivolts;
     uint8_t percent;
 } battery_reading_t;
 
@@ -30,7 +37,10 @@ esp_err_t battery_init(void);
 
 bool battery_is_available(void);
 
-/* One conversion. Returns false when no reading could be taken. */
-bool battery_sample(battery_reading_t *reading);
+/*
+ * One conversion. `charging` tells the gauge to undo the lift the charger puts
+ * on the terminal voltage. Returns false when no reading could be taken.
+ */
+bool battery_sample(battery_reading_t *reading, bool charging);
 
 #endif /* BATTERY_H */

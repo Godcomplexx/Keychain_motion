@@ -192,11 +192,13 @@ details for the port are in [xiao_nrf52840/README.md](xiao_nrf52840/README.md).
 - Automatic revert has only been verified from the top: the image is seen to
   arrive unconfirmed and to confirm itself on a successful start. A deliberately
   broken image has not been used to provoke the revert itself.
-- Charge is measured through voltage, and that method cannot be made much
-  better: a hundred millivolts halves the charge in the middle of a LiPo curve.
-  So the display shows the volts next to the gauge - that is what is actually
-  measured - and while charging it sweeps the fill without a number, because
-  charge current lifts the voltage and any percentage would read high.
+- Charge is computed from voltage, and that method cannot be made much better:
+  a hundred millivolts halves the charge in the middle of a LiPo curve. The
+  display writes the percentage next to the gauge; while charging, 60 mV is
+  subtracted first, because that is how much the charge current lifts the
+  terminal voltage and leaving it in would read about ten points high. That
+  figure was measured on this board rather than looked up, and another cell
+  would need a different one.
 
 ---
 

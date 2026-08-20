@@ -645,7 +645,7 @@ int main(void)
             now_us - last_battery_sample_us >= BATTERY_SAMPLE_INTERVAL_US) {
             last_battery_sample_us = now_us;
             battery_reading_t reading;
-            if (battery_sample(&reading)) {
+            if (battery_sample(&reading, charger_attached)) {
                 battery_percent = reading.percent;
                 battery_millivolts = reading.cell_millivolts;
                 /*
@@ -655,8 +655,10 @@ int main(void)
                  */
                 if (reading.percent != last_logged_percent) {
                     last_logged_percent = reading.percent;
-                    ESP_LOGI(TAG, "Battery: pin=%d mV cell=%d mV -> %u%%",
+                    ESP_LOGI(TAG,
+                             "Battery: pin=%d mV cell=%d mV resting=%d mV -> %u%%",
                              reading.pin_millivolts, reading.cell_millivolts,
+                             reading.resting_millivolts,
                              (unsigned)reading.percent);
                 }
             }

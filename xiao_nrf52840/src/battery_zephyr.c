@@ -21,6 +21,14 @@ static const char *TAG = "battery";
 #define BATTERY_DIVIDER_NUMERATOR 200
 #define BATTERY_DIVIDER_DENOMINATOR 100
 
+/*
+ * How much the charger lifts the terminal voltage. Measured on this board: the
+ * reading rose by 30 mV at the pin, so 60 mV at the cell, within seconds of the
+ * cable going in - far too fast to be actual charge. Subtracting it turns the
+ * reading back into something the discharge curve can be asked about.
+ */
+#define BATTERY_CHARGING_LIFT_MV 60
+
 /* A LiPo discharge curve is far from linear; these are the usual landmarks. */
 static const struct {
     int32_t millivolts;
@@ -91,7 +99,7 @@ bool battery_is_available(void)
     return s_available;
 }
 
-bool battery_sample(battery_reading_t *reading)
+bool battery_sample(battery_reading_t *reading, bool charging)
 {
     if (!s_available || reading == NULL) {
         return false;
@@ -122,7 +130,9 @@ bool battery_sample(battery_reading_t *reading)
     reading->cell_millivolts = (s_smoothed_millivolts *
                                 BATTERY_DIVIDER_NUMERATOR) /
                                BATTERY_DIVIDER_DENOMINATOR;
-    reading->percent = percent_for(reading->cell_millivolts);
+    reading->resting_millivolts = reading->cell_millivolts -
+                                  (charging ? BATTERY_CHARGING_LIFT_MV : 0);
+    reading->percent = percent_for(reading->resting_millivolts);
     return true;
 }
 
@@ -139,9 +149,10 @@ bool battery_is_available(void)
     return false;
 }
 
-bool battery_sample(battery_reading_t *reading)
+bool battery_sample(battery_reading_t *reading, bool charging)
 {
     ARG_UNUSED(reading);
+    ARG_UNUSED(charging);
     return false;
 }
 
