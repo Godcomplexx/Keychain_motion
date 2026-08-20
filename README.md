@@ -92,21 +92,34 @@ never finishes.
 | BLE window open | the eyes track a scanning line | P1 |
 | left alone 30 s | bored: smaller eyes, wandering gaze, slow sighs | P2 |
 | left alone 5 min | asleep: eye slits and rising `z` | P2 |
-| left alone longer | one self-directed activity | P3 |
+| left alone longer | one of three self-directed activities, listed below | P3 |
 
 A higher priority interrupts a lower one immediately and is never pushed aside
 by it. Any deliberate interaction cancels a P3 activity in the same tick.
 
-**The FLIP particle animation was not removed**, but it is worth being precise
-about what that means. It became one of the things the pet does when left alone,
-alongside stargazing and letting its gaze wander.
+### Self-directed activities
 
-*How to see it:* it is always the first activity after power-up. Switch the board
-on and leave it alone for about twenty seconds. After that the three activities
-alternate, so which one appears next is not something you choose - there is
-currently no gesture or command that summons the particles on demand.
+Left alone for long enough, the pet finds something to do. There are three:
 
-*It still depends on the accelerometer.* Without a sensor the particles are
+| Activity | On screen | Length |
+|---|---|---:|
+| `act_fluid` | **the FLIP particle animation** - the one from version 1: tilt sloshes the fluid across the display | 12 s |
+| `act_stargaze` | the gaze goes up while dots drift upward from below | 9 s |
+| `act_wander` | the gaze walks a slow circle, as if thinking | 7 s |
+
+An activity starts after 45 seconds without interaction, or 20 if the
+accelerometer is not soldered, so that something still happens on screen. Then
+a 40-120 second pause; no activity repeats more often than once per 5 minutes,
+and the same one never runs twice in a row. Any interaction ends an activity in
+the same tick.
+
+**Where FLIP went.** It was not removed, but it is worth being precise. It is
+the first of the three, and **after power-up it always runs first** - switch the
+board on and leave it alone for about twenty seconds. After that they alternate,
+and which one comes next is not something you choose: there is currently no
+gesture or command that summons the particles on demand.
+
+**It still depends on the accelerometer.** Without a sensor the particles are
 driven by a synthetic tilt sweep: they move, but they react to nothing, which is
 a demonstration rather than the version 1 behavior. Soldering the LIS2DW12
 restores real tilt with no firmware change.
