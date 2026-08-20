@@ -51,6 +51,14 @@ A procedural companion on a custom PCB. Version 1, further down this page, used
 four fixed screens selected by a motion state machine; version 2 replaces them
 with a character.
 
+| The board | The enclosure |
+|---|---|
+| <img src="docs/assets/pcb-render.jpg" alt="Version 2 board render: 40 mm round two-layer PCB with the E73 module, USB-C, the OLED header and a cat on the silkscreen" width="330"> | <img src="docs/assets/enclosure.gif" alt="Rotating render of the cat-shaped translucent enclosure with the OLED behind the front" width="330"> |
+
+Both are renders: the board as laid out, and the enclosure it is meant to live
+in. The cat on the silkscreen and the ears on the case are the same idea from
+two directions.
+
 ## The Software
 
 The screen is no longer chosen by "which mode is active" but by "what is the
@@ -411,9 +419,9 @@ active-play time limit. It exits after five minutes without paddle input.
 |---|---|---|
 | <img src="docs/assets/demo.gif" alt="SmartMotion Keychain motion demo" width="240"> | <img src="docs/assets/prototype.webp" alt="SmartMotion Keychain concept render" width="240"> | <img src="docs/assets/ascii-magic.png" alt="SmartMotion Keychain ASCII particle effect" width="240"> |
 
-The current media shows the interaction concept and enclosure direction.
-Photographs of the assembled electronics will be added after enclosure
-integration.
+These show version 1 running. The version 2 board and enclosure appear as
+renders further up; photographs of the assembled version 2 hardware will be
+added once the accelerometer is soldered and the case is printed.
 
 ## Documentation
 
