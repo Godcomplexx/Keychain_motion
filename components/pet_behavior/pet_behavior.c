@@ -392,16 +392,32 @@ void pet_behavior_post(pet_behavior_t *pet, pet_event_t event, uint32_t now_ms)
         (void)start_transient(pet, PET_LOOK_RIGHT, PET_SOURCE_MOTION, now_ms);
         break;
 
-    case PET_EVENT_SHAKEN: {
+    /*
+     * One jolt startles, deliberate shaking annoys. This used to require the
+     * repeated gesture twice inside five seconds - six jolts - to reach anger,
+     * which fired so rarely that it read as broken.
+     */
+    case PET_EVENT_JOLT:
         register_activity_reset(pet, now_ms);
         gain_bond(pet, now_ms);
-        const bool escalate = pet->shake_window_ms != 0U &&
-                              !time_reached(now_ms, pet->shake_window_ms);
-        (void)start_transient(pet, escalate ? PET_ANGRY : PET_SURPRISED,
-                              PET_SOURCE_MOTION, now_ms);
-        pet->shake_window_ms = now_ms + SHAKE_ESCALATION_MS;
+        (void)start_transient(pet, PET_SURPRISED, PET_SOURCE_MOTION, now_ms);
         break;
-    }
+
+    case PET_EVENT_SHAKEN:
+        register_activity_reset(pet, now_ms);
+        gain_bond(pet, now_ms);
+        (void)start_transient(pet, PET_ANGRY, PET_SOURCE_MOTION, now_ms);
+        break;
+
+    case PET_EVENT_PLAY_REQUESTED:
+        /* Asked for by name, so it skips the scheduler entirely. */
+        if (is_activity(pet->transient_id)) {
+            finish_transient(pet, now_ms, false);
+        }
+        pet->last_activity_ms = now_ms;
+        gain_bond(pet, now_ms);
+        (void)start_transient(pet, PET_ACT_FLUID, PET_SOURCE_MOTION, now_ms);
+        break;
 
     case PET_EVENT_CHARGER_ATTACHED:
         register_activity_reset(pet, now_ms);

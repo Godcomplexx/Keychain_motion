@@ -89,6 +89,7 @@ motion_detector_result_t motion_detector_update(motion_detector_t *detector,
         }
 
         detector->last_shake_peak_us = now_us;
+        result.shake_peak = true;
         ++detector->shake_count;
         if (detector->shake_count >= detector->shake_count_required) {
             result.shake_detected = true;

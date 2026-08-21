@@ -8,6 +8,12 @@
 
 typedef struct {
     bool movement_detected;
+    /*
+     * One sharp jolt. Reported on every peak, so a single bump can be reacted
+     * to without waiting for the full repeated gesture below.
+     */
+    bool shake_peak;
+    /* The deliberate repeated shake: several peaks inside one short window. */
     bool shake_detected;
     bool stillness_timeout;
     int raw_delta;

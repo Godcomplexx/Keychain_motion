@@ -66,7 +66,12 @@ typedef enum {
     PET_EVENT_MOVEMENT,
     PET_EVENT_TILT_LEFT,
     PET_EVENT_TILT_RIGHT,
+    /* One sharp jolt: startles the pet. */
+    PET_EVENT_JOLT,
+    /* The deliberate repeated shake: annoys it. */
     PET_EVENT_SHAKEN,
+    /* An explicit "play with the particles" gesture. */
+    PET_EVENT_PLAY_REQUESTED,
     PET_EVENT_CHARGER_ATTACHED,
     PET_EVENT_CHARGER_DETACHED,
     /* The BLE advertising window opened and the phone may connect. */

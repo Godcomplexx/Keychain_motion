@@ -59,6 +59,12 @@
 #define TILT_RELEASE_G 0.18f
 /* Below this the keychain counts as level and the gaze rests in the middle. */
 #define TILT_DEAD_ZONE_G 0.06f
+/*
+ * Tip it steeply and hold, like tipping a glass, and the particles come out.
+ * Steep enough and long enough that ordinary handling cannot do it by accident.
+ */
+#define PLAY_GESTURE_TILT_G 0.80f
+#define PLAY_GESTURE_HOLD_US 1500000
 
 static const char *TAG = "keychain";
 
@@ -338,6 +344,8 @@ int main(void)
     int previous_tilt_zone = 0;
     int smoothed_tilt_x = 0;
     int smoothed_tilt_y = 0;
+    int64_t play_gesture_started_us = 0;
+    bool play_gesture_fired = false;
     bool previous_charger_attached = false;
     bool sensorless_ble_announced = false;
     int64_t last_battery_sample_us = 0;
@@ -592,6 +600,12 @@ int main(void)
             }
         }
 
+        /* A single jolt startles the pet even when it is not a full gesture. */
+        if (sensor_sample_valid && detector_result.shake_peak &&
+            !detector_result.shake_detected) {
+            pet_behavior_post(&pet, PET_EVENT_JOLT, now_ms);
+        }
+
         if (sensor_sample_valid && event == MOTION_EVENT_SHAKE_DETECTED) {
             /* The pet reacts to being shaken whatever the screen is doing. */
             pet_behavior_post(&pet, PET_EVENT_SHAKEN, now_ms);
@@ -657,6 +671,26 @@ int main(void)
          */
         smoothed_tilt_x = (smoothed_tilt_x * 3 + tilt_to_percent(tilt_x)) / 4;
         smoothed_tilt_y = (smoothed_tilt_y * 3 + tilt_to_percent(tilt_y)) / 4;
+
+        /*
+         * Hold it steeply tipped to ask for the particles. The latch makes the
+         * gesture fire once per tip rather than continuously while held.
+         */
+        if (sensor_sample_valid &&
+            (tilt_x >= PLAY_GESTURE_TILT_G || tilt_x <= -PLAY_GESTURE_TILT_G)) {
+            if (play_gesture_started_us == 0) {
+                play_gesture_started_us = now_us;
+            } else if (!play_gesture_fired &&
+                       now_us - play_gesture_started_us >=
+                           PLAY_GESTURE_HOLD_US) {
+                play_gesture_fired = true;
+                pet_behavior_post(&pet, PET_EVENT_PLAY_REQUESTED, now_ms);
+                ESP_LOGI(TAG, "Play gesture: particles requested");
+            }
+        } else {
+            play_gesture_started_us = 0;
+            play_gesture_fired = false;
+        }
 
         /*
          * A hardware edge on ACC_INT1 means the sensor itself decided the
