@@ -24,4 +24,10 @@ bool phone_sync_get_datetime_update(device_clock_datetime_t *datetime);
 
 bool phone_sync_get_command(phone_sync_command_t *command);
 
+/*
+ * True once per phone connection, then false again. Distinct from a time sync:
+ * the phone is simply here, which is worth greeting before it says anything.
+ */
+bool phone_sync_take_connected_event(void);
+
 #endif /* PHONE_SYNC_H */

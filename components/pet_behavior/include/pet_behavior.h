@@ -33,6 +33,10 @@ typedef enum {
     PET_ASLEEP,
     PET_SLEEPY,
     PET_CHARGING,
+    /* Held inverted: indignant, and the eyes end up where they should not be. */
+    PET_UPSIDE_DOWN,
+    /* Rocked gently and steadily: the one thing that calms it down. */
+    PET_SOOTHED,
     /* Reactions: transient, they expire on their own deadline. */
     PET_WAKE_UP,
     PET_LOOK_LEFT,
@@ -42,6 +46,12 @@ typedef enum {
     PET_HAPPY,
     PET_ACKNOWLEDGE,
     PET_CONNECTING,
+    /* Dropped. The only P0 behaviour: nothing outranks being in free fall. */
+    PET_STARTLED,
+    /* Something moved nearby without touching it. */
+    PET_CURIOUS,
+    /* The phone actually connected, as opposed to merely being looked for. */
+    PET_GREETING,
     /* Self-directed activities, chosen by the P3 scheduler when left alone. */
     PET_ACT_FLUID,
     PET_ACT_STARGAZE,
@@ -72,6 +82,12 @@ typedef enum {
     PET_EVENT_SHAKEN,
     /* An explicit "play with the particles" gesture. */
     PET_EVENT_PLAY_REQUESTED,
+    /* Free fall: the accelerometer stops feeling gravity. */
+    PET_EVENT_FREE_FALL,
+    /* Faint movement transmitted through the surface, nobody holding it. */
+    PET_EVENT_NEARBY_MOTION,
+    /* A phone finished connecting over BLE. */
+    PET_EVENT_PHONE_CONNECTED,
     PET_EVENT_CHARGER_ATTACHED,
     PET_EVENT_CHARGER_DETACHED,
     /* The BLE advertising window opened and the phone may connect. */
@@ -104,6 +120,10 @@ typedef struct {
      */
     int8_t tilt_x;
     int8_t tilt_y;
+    /* Gravity points the wrong way: the keychain is being held inverted. */
+    bool upside_down;
+    /* Slow, steady, gentle motion - being rocked rather than handled. */
+    bool being_rocked;
 } pet_context_t;
 
 #define PET_BATTERY_UNKNOWN 255U

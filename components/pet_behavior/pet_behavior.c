@@ -11,6 +11,9 @@ enum {
     HAPPY_MS = 2000,
     ACKNOWLEDGE_MS = 450,
     CONNECTING_MAX_MS = 10000,
+    STARTLED_MS = 1800,
+    CURIOUS_MS = 2200,
+    GREETING_MS = 1600,
     /* Asked for by hand, so long enough to actually play with. */
     ACT_FLUID_MS = 30000,
     ACT_STARGAZE_MS = 9000,
@@ -107,6 +110,9 @@ static uint32_t duration_for(pet_behavior_id_t id)
     case PET_HAPPY: return HAPPY_MS;
     case PET_ACKNOWLEDGE: return ACKNOWLEDGE_MS;
     case PET_CONNECTING: return CONNECTING_MAX_MS;
+    case PET_STARTLED: return STARTLED_MS;
+    case PET_CURIOUS: return CURIOUS_MS;
+    case PET_GREETING: return GREETING_MS;
     case PET_ACT_FLUID: return ACT_FLUID_MS;
     case PET_ACT_STARGAZE: return ACT_STARGAZE_MS;
     case PET_ACT_WANDER: return ACT_WANDER_MS;
@@ -120,11 +126,16 @@ static pet_priority_t priority_for(pet_behavior_id_t id)
         return PET_PRIORITY_P3;
     }
     switch (id) {
+    /* Being dropped outranks everything, including a game in progress. */
+    case PET_STARTLED:
+        return PET_PRIORITY_P0;
     case PET_NEUTRAL:
     case PET_BORED:
     case PET_ASLEEP:
     case PET_SLEEPY:
     case PET_CHARGING:
+    case PET_UPSIDE_DOWN:
+    case PET_SOOTHED:
         return PET_PRIORITY_P2;
     default:
         return PET_PRIORITY_P1;
@@ -305,6 +316,15 @@ static pet_behavior_id_t resolve_base(const pet_behavior_t *pet,
 {
     const uint32_t idle_ms = elapsed_since(now_ms, pet->last_activity_ms);
 
+    /* Held the wrong way up: nothing else matters until it is put back. */
+    if (context->upside_down) {
+        return PET_UPSIDE_DOWN;
+    }
+    /* Rocking calms it, and outranks sleep because it is being held. */
+    if (context->being_rocked) {
+        return PET_SOOTHED;
+    }
+
     /*
      * Deep sleep is only safe when the accelerometer can wake the pet up again.
      * Without it the face would freeze forever, which reads as a crash.
@@ -432,6 +452,27 @@ void pet_behavior_post(pet_behavior_t *pet, pet_event_t event, uint32_t now_ms)
         (void)start_transient(pet, PET_ACKNOWLEDGE, PET_SOURCE_POWER, now_ms);
         break;
 
+    case PET_EVENT_FREE_FALL:
+        /* No bond for this one: being dropped is not affection. */
+        register_activity_reset(pet, now_ms);
+        (void)start_transient(pet, PET_STARTLED, PET_SOURCE_MOTION, now_ms);
+        break;
+
+    case PET_EVENT_NEARBY_MOTION:
+        /*
+         * Deliberately does not reset the idle timers. Nobody touched it, so
+         * it has not been interacted with - it only noticed something.
+         */
+        (void)start_transient(pet, PET_CURIOUS, PET_SOURCE_MOTION, now_ms);
+        break;
+
+    case PET_EVENT_PHONE_CONNECTED:
+        register_activity_reset(pet, now_ms);
+        gain_bond(pet, now_ms);
+        pet->phone_window_open = false;
+        (void)start_transient(pet, PET_GREETING, PET_SOURCE_PHONE, now_ms);
+        break;
+
     case PET_EVENT_PHONE_WINDOW_OPEN:
         pet->phone_window_open = true;
         register_activity_reset(pet, now_ms);
@@ -536,6 +577,11 @@ const char *pet_behavior_name(pet_behavior_id_t id)
     case PET_ASLEEP: return "asleep";
     case PET_SLEEPY: return "sleepy";
     case PET_CHARGING: return "charging";
+    case PET_UPSIDE_DOWN: return "upside_down";
+    case PET_SOOTHED: return "soothed";
+    case PET_STARTLED: return "startled";
+    case PET_CURIOUS: return "curious";
+    case PET_GREETING: return "greeting";
     case PET_WAKE_UP: return "wake_up";
     case PET_LOOK_LEFT: return "look_left";
     case PET_LOOK_RIGHT: return "look_right";

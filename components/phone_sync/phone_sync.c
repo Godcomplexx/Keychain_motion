@@ -34,6 +34,8 @@ static bool s_stack_initialized;
 static bool s_host_synced;
 static bool s_advertising_requested;
 static bool s_has_pending_datetime;
+/* Set in NimBLE host context, consumed by the application loop. */
+static volatile bool s_connected_event;
 static phone_sync_command_t s_pending_command;
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_time_chr_handle;
@@ -250,6 +252,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             s_conn_handle = event->connect.conn_handle;
+            s_connected_event = true;
             ESP_LOGW(TAG, "Phone connected");
         } else {
             ESP_LOGW(TAG, "Phone connection failed: status=%d",
@@ -469,6 +472,15 @@ bool phone_sync_get_datetime_update(device_clock_datetime_t *datetime)
     }
     portEXIT_CRITICAL(&s_datetime_lock);
     return has_update;
+}
+
+bool phone_sync_take_connected_event(void)
+{
+    if (!s_connected_event) {
+        return false;
+    }
+    s_connected_event = false;
+    return true;
 }
 
 bool phone_sync_get_command(phone_sync_command_t *command)

@@ -23,6 +23,8 @@ static bool s_has_pending_datetime;
 static phone_sync_command_t s_pending_command;
 static device_clock_datetime_t s_pending_datetime;
 static struct bt_conn *s_connection;
+/* Set in BLE callback context, consumed by the application loop. */
+static volatile bool s_connected_event;
 K_MUTEX_DEFINE(s_state_lock);
 
 static struct bt_uuid_128 s_service_uuid = BT_UUID_INIT_128(
@@ -163,6 +165,7 @@ static void connected(struct bt_conn *connection, uint8_t error)
         bt_conn_unref(s_connection);
     }
     s_connection = bt_conn_ref(connection);
+    s_connected_event = true;
     k_mutex_unlock(&s_state_lock);
     ESP_LOGI(TAG, "Phone connected");
 }
@@ -293,6 +296,15 @@ bool phone_sync_get_datetime_update(device_clock_datetime_t *datetime)
     }
     k_mutex_unlock(&s_state_lock);
     return has_update;
+}
+
+bool phone_sync_take_connected_event(void)
+{
+    if (!s_connected_event) {
+        return false;
+    }
+    s_connected_event = false;
+    return true;
 }
 
 bool phone_sync_get_command(phone_sync_command_t *command)

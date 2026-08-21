@@ -49,6 +49,12 @@ typedef struct {
      * instead of snapping back to centre once a scripted reaction ends.
      */
     bool track_tilt;
+    /*
+     * Rotation of the whole eye pair about the centre of the face, in radians.
+     * Only the tumble uses it, but it belongs to the frame rather than to that
+     * one case, so any later behaviour can lean the face over.
+     */
+    float rotation;
     pet_overlay_t overlay;
 } face_frame_t;
 
@@ -281,6 +287,7 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
     frame->arc_eyes = false;
     frame->allow_blink = true;
     frame->track_tilt = false;
+    frame->rotation = 0.0f;
     frame->overlay = OVERLAY_NONE;
 
     const uint32_t elapsed = view->elapsed_ms;
@@ -412,6 +419,76 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
         frame->gaze_y = -6;
         frame->gaze_x = (int)(oscillate(now_ms, 5200U) * 4.0f);
         frame->overlay = OVERLAY_STARS;
+        break;
+
+    case PET_UPSIDE_DOWN: {
+        /*
+         * Indignant. The eyes tumble over during the first second and then stay
+         * where they have no business being, until the keychain is turned back.
+         */
+        const float turn = ease_out((float)elapsed / 1000.0f);
+        frame->rotation = turn * (TWO_PI / 2.0f);
+        frame->eye_width = 30;
+        frame->eye_height = 24;
+        frame->lid_depth = 5;
+        frame->lid_slant = 6;
+        /* A slow indignant wobble once it has settled upside down. */
+        frame->group_dx = (int)(oscillate(now_ms, 900U) * 2.0f * turn);
+        break;
+    }
+
+    case PET_SOOTHED:
+        /* Lids heavy, everything slow: this is the state that calms it. */
+        frame->eye_width = 28;
+        frame->eye_height = 24;
+        frame->lid_depth = 10;
+        frame->gaze_y = 2;
+        frame->group_dx = (int)(oscillate(now_ms, 2600U) * 3.0f);
+        frame->group_dy = (int)(oscillate(now_ms, 5200U) * 1.5f);
+        break;
+
+    case PET_STARTLED: {
+        /* Eyes as wide as they go, and a hard shake that decays. */
+        const float damping = 1.0f - progress;
+        frame->eye_width = 36;
+        frame->eye_height = 40;
+        frame->radius = 14;
+        frame->allow_blink = false;
+        frame->group_dx = (int)(sinf((float)elapsed * 0.09f) * 5.0f * damping);
+        frame->group_dy = (int)(sinf((float)elapsed * 0.07f) * 4.0f * damping);
+        break;
+    }
+
+    case PET_CURIOUS: {
+        /*
+         * Looking around: the gaze holds three positions rather than sweeping,
+         * because a search reads as a series of glances, not as a pan.
+         */
+        enum { CURIOUS_STOP_COUNT = 4 };
+        static const int stops[CURIOUS_STOP_COUNT] = {-9, 7, -4, 0};
+        const uint32_t span = (view->duration_ms > 0U) ? view->duration_ms : 1U;
+        uint32_t step = (elapsed * CURIOUS_STOP_COUNT) / span;
+        if (step >= CURIOUS_STOP_COUNT) {
+            step = CURIOUS_STOP_COUNT - 1U;
+        }
+        frame->gaze_x = stops[step];
+        frame->gaze_y = -2;
+        frame->eye_width = 28;
+        frame->eye_height = 30;
+        /* A small head tilt sells the curiosity more than the eyes do. */
+        frame->rotation = 0.12f;
+        break;
+    }
+
+    case PET_GREETING:
+        /* Arcs like the happy face, plus a wave: the group leans side to side. */
+        frame->arc_eyes = true;
+        frame->eye_width = 30;
+        frame->eye_height = 12;
+        frame->allow_blink = false;
+        frame->group_dx = (int)(oscillate(now_ms, 500U) * 4.0f);
+        frame->rotation = oscillate(now_ms, 500U) * 0.10f;
+        frame->overlay = OVERLAY_SPARKLE;
         break;
 
     case PET_ACT_WANDER: {
@@ -552,22 +629,31 @@ esp_err_t pet_face_render(const pet_view_t *view, uint32_t now_ms)
 
     oled_display_clear();
 
+    const int face_center_x = (EYE_LEFT_X + EYE_RIGHT_X) / 2;
+    const float turn_sin = sinf(frame.rotation);
+    const float turn_cos = cosf(frame.rotation);
+
     const int center_y = EYE_CENTER_Y + frame.group_dy + frame.gaze_y;
     for (int eye = 0; eye < 2; ++eye) {
-        const int center_x = ((eye == 0) ? EYE_LEFT_X : EYE_RIGHT_X) +
+        /* Rotate each eye about the middle of the face before shifting it. */
+        const float offset_x =
+            (float)(((eye == 0) ? EYE_LEFT_X : EYE_RIGHT_X) - face_center_x);
+        const int center_x = face_center_x +
+                             (int)(offset_x * turn_cos + 0.5f) +
                              frame.group_dx + frame.gaze_x;
+        const int eye_center_y = center_y + (int)(offset_x * turn_sin + 0.5f);
         if (frame.arc_eyes) {
-            draw_arc_eye(center_x, center_y, frame.eye_width,
+            draw_arc_eye(center_x, eye_center_y, frame.eye_width,
                          frame.eye_height, 4);
             continue;
         }
 
-        fill_round_rect(center_x, center_y, frame.eye_width, eye_height,
+        fill_round_rect(center_x, eye_center_y, frame.eye_width, eye_height,
                         frame.radius, true);
         /* Skip the brow mid-blink: it would just eat the whole closed eye. */
         if (frame.lid_depth > 0 && openness > 50) {
             const int slant = (eye == 0) ? frame.lid_slant : -frame.lid_slant;
-            cut_lid(center_x, center_y, frame.eye_width, eye_height,
+            cut_lid(center_x, eye_center_y, frame.eye_width, eye_height,
                     frame.lid_depth, slant);
         }
     }

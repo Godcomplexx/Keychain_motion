@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -65,6 +66,35 @@
  */
 #define PLAY_GESTURE_TILT_G 0.80f
 #define PLAY_GESTURE_HOLD_US 1500000
+
+/*
+ * In free fall the accelerometer stops feeling gravity, so the magnitude of
+ * the vector collapses towards zero. Nothing else on a desk does that.
+ */
+#define FREE_FALL_MAGNITUDE_G 0.35f
+#define FREE_FALL_HOLD_US 80000
+#define FREE_FALL_REARM_US 1500000
+
+/* Gravity pointing the wrong way along Z, held long enough to be deliberate. */
+#define UPSIDE_DOWN_G 0.55f
+#define UPSIDE_DOWN_HOLD_US 600000
+
+/*
+ * Rocking is slow, gentle and repetitive: several direction changes inside a
+ * few seconds, with an amplitude between "not still" and "being shaken".
+ */
+#define ROCKING_MIN_TILT_G 0.12f
+#define ROCKING_MAX_TILT_G 0.70f
+#define ROCKING_REVERSALS_REQUIRED 4
+#define ROCKING_WINDOW_US 5000000
+
+/*
+ * Something moved nearby without picking the keychain up: a tremor above the
+ * noise floor but below the threshold that counts as handling.
+ */
+#define NEARBY_MOTION_MIN_DELTA 18
+#define NEARBY_MOTION_MAX_DELTA 70
+#define NEARBY_MOTION_REARM_US 12000000
 
 static const char *TAG = "keychain";
 
@@ -346,6 +376,15 @@ int main(void)
     int smoothed_tilt_y = 0;
     int64_t play_gesture_started_us = 0;
     bool play_gesture_fired = false;
+    int64_t free_fall_started_us = 0;
+    int64_t last_free_fall_us = 0;
+    int64_t upside_down_started_us = 0;
+    int64_t last_nearby_motion_us = 0;
+    int64_t rocking_window_started_us = 0;
+    int rocking_reversals = 0;
+    int rocking_direction = 0;
+    bool being_rocked = false;
+    bool upside_down = false;
     bool previous_charger_attached = false;
     bool sensorless_ble_announced = false;
     int64_t last_battery_sample_us = 0;
@@ -505,6 +544,10 @@ int main(void)
             phone_sync_window_active = false;
             pet_behavior_post(&pet, PET_EVENT_PHONE_WINDOW_CLOSED, now_ms);
             ESP_LOGI(TAG, "Phone sync window expired");
+        }
+
+        if (phone_sync_available && phone_sync_take_connected_event()) {
+            pet_behavior_post(&pet, PET_EVENT_PHONE_CONNECTED, now_ms);
         }
 
         phone_sync_command_t command;
@@ -672,6 +715,77 @@ int main(void)
         smoothed_tilt_x = (smoothed_tilt_x * 3 + tilt_to_percent(tilt_x)) / 4;
         smoothed_tilt_y = (smoothed_tilt_y * 3 + tilt_to_percent(tilt_y)) / 4;
 
+        if (sensor_sample_valid) {
+            const float tilt_z = mpu6050_accel_to_g(raw_data.z);
+            const float magnitude =
+                sqrtf(tilt_x * tilt_x + tilt_y * tilt_y + tilt_z * tilt_z);
+
+            /* Free fall: gravity disappears from the vector. */
+            if (magnitude < FREE_FALL_MAGNITUDE_G) {
+                if (free_fall_started_us == 0) {
+                    free_fall_started_us = now_us;
+                } else if (now_us - free_fall_started_us >= FREE_FALL_HOLD_US &&
+                           now_us - last_free_fall_us >= FREE_FALL_REARM_US) {
+                    last_free_fall_us = now_us;
+                    pet_behavior_post(&pet, PET_EVENT_FREE_FALL, now_ms);
+                    ESP_LOGW(TAG, "Free fall detected (%.2f g)",
+                             (double)magnitude);
+                }
+            } else {
+                free_fall_started_us = 0;
+            }
+
+            /* Held inverted, long enough that it is not a passing wave. */
+            if (tilt_z <= -UPSIDE_DOWN_G) {
+                if (upside_down_started_us == 0) {
+                    upside_down_started_us = now_us;
+                } else if (now_us - upside_down_started_us >=
+                           UPSIDE_DOWN_HOLD_US) {
+                    upside_down = true;
+                }
+            } else {
+                upside_down_started_us = 0;
+                upside_down = false;
+            }
+
+            /*
+             * Rocking: count direction reversals of a gentle tilt. A shake
+             * reverses too, but its amplitude is far outside this band.
+             */
+            const float swing = (tilt_x < 0.0f) ? -tilt_x : tilt_x;
+            if (swing >= ROCKING_MIN_TILT_G && swing <= ROCKING_MAX_TILT_G) {
+                const int direction = (tilt_x > 0.0f) ? 1 : -1;
+                if (rocking_direction != 0 && direction != rocking_direction) {
+                    if (rocking_window_started_us == 0 ||
+                        now_us - rocking_window_started_us > ROCKING_WINDOW_US) {
+                        rocking_window_started_us = now_us;
+                        rocking_reversals = 0;
+                    }
+                    ++rocking_reversals;
+                }
+                rocking_direction = direction;
+            }
+            if (rocking_window_started_us != 0 &&
+                now_us - rocking_window_started_us > ROCKING_WINDOW_US) {
+                rocking_window_started_us = 0;
+                rocking_reversals = 0;
+                being_rocked = false;
+            }
+            being_rocked = rocking_reversals >= ROCKING_REVERSALS_REQUIRED;
+
+            /* A tremor through the surface, with nobody holding it. */
+            const int delta = detector_result.raw_delta;
+            if (delta >= NEARBY_MOTION_MIN_DELTA &&
+                delta <= NEARBY_MOTION_MAX_DELTA && !being_rocked &&
+                now_us - last_nearby_motion_us >= NEARBY_MOTION_REARM_US) {
+                last_nearby_motion_us = now_us;
+                pet_behavior_post(&pet, PET_EVENT_NEARBY_MOTION, now_ms);
+            }
+        } else {
+            upside_down = false;
+            being_rocked = false;
+        }
+
         /*
          * Hold it steeply tipped to ask for the particles. The latch makes the
          * gesture fire once per tip rather than continuously while held.
@@ -743,6 +857,8 @@ int main(void)
             /* Only a real sensor may steer the gaze; the demo wave must not. */
             .tilt_x = sensor_sample_valid ? (int8_t)smoothed_tilt_x : 0,
             .tilt_y = sensor_sample_valid ? (int8_t)smoothed_tilt_y : 0,
+            .upside_down = upside_down,
+            .being_rocked = being_rocked,
         };
         pet_behavior_update(&pet, &pet_context, now_ms);
         const pet_view_t *pet_view = pet_behavior_view(&pet);
