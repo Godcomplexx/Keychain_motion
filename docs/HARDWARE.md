@@ -11,7 +11,7 @@
 | Controller | ESP32-C3 Super Mini |
 | Display | 0.96-inch 128x64 SSD1306-compatible OLED in I2C mode |
 | Motion sensor | MPU-6050 at address `0x68` |
-| Shared bus | I2C port 0, 200 kHz |
+| Shared bus | I2C port 0, 300 kHz |
 | Battery | Protected single-cell 3.7 V LiPo |
 
 `components/board_config/include/board_config.h` is the source of truth. Update
@@ -146,7 +146,7 @@ If only one appears, inspect that module and its address/configuration links.
 | Контроллер | ESP32-C3 Super Mini |
 | Дисплей | OLED 0.96", 128x64, SSD1306-совместимый, режим I2C |
 | Датчик движения | MPU-6050 по адресу `0x68` |
-| Общая шина | I2C port 0, 200 кГц |
+| Общая шина | I2C port 0, 300 кГц |
 | Аккумулятор | Защищённый одноэлементный LiPo 3.7 В |
 
 Источник истины — `components/board_config/include/board_config.h`. Сначала

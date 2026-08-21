@@ -20,6 +20,7 @@
 #include "mpu6050.h"
 #include "mpu6050_optional.h"
 #include "battery.h"
+#include "i2c_scan.h"
 #include "oled_display.h"
 #include "oled_display_optional.h"
 #include "pet_behavior.h"
@@ -361,6 +362,10 @@ int main(void)
 
     accel_int_init();
     (void)battery_init();
+
+    /* Both drivers have reported by now; this says what is really on the bus,
+     * which is the difference between a loose wire and a driver problem. */
+    i2c_scan_log();
 
     const bool phone_sync_available = phone_sync_init() == ESP_OK;
     if (!phone_sync_available) {

@@ -7,6 +7,7 @@ set(KEYCHAIN_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 target_sources(app PRIVATE
     src/battery_zephyr.c
+    src/i2c_scan.c
     src/main.c
     src/mpu6050_zephyr.c
     src/oled_display_zephyr.c

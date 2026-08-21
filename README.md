@@ -261,7 +261,7 @@ keychain does not advertise, reducing unnecessary radio use.
 - Single-cell 3.7 V LiPo battery.
 - Protected charger and regulated power converter.
 
-The OLED and MPU-6050 share one 200 kHz I2C bus:
+The OLED and MPU-6050 share one 300 kHz I2C bus:
 
 | Signal | ESP32-C3 |
 |---|---:|
@@ -443,6 +443,17 @@ added once the accelerometer is soldered and the case is printed.
 - [nRF52840 port and companion behavior](xiao_nrf52840/README.md)
 - [Flashing, USB updates and diagnostics](tools/flash/README.md)
 
+## Portable Host Tests
+
+The first native test exercises the platform-independent `pet_behavior`
+component. Run it in a shell where a native C compiler and Ninja are available:
+
+```powershell
+cmake -S tests/host -B build-host -G Ninja
+cmake --build build-host
+ctest --test-dir build-host --output-on-failure
+```
+
 ## Roadmap and Known Limitations
 
 - Solder the LIS2DW12 and verify every motion reaction on the version 2 board.
@@ -453,5 +464,5 @@ added once the accelerometer is soldered and the case is printed.
   key.
 - Measure current in every operating mode and publish real battery-life data.
 - Calibrate step counting for different keychain orientations.
-- Add automated host-side tests for state, behavior and game logic.
+- Expand automated host-side coverage beyond `pet_behavior` to state and game logic.
 - Prepare a release-signed Android build if the companion app is distributed.
