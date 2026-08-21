@@ -11,7 +11,8 @@ enum {
     HAPPY_MS = 2000,
     ACKNOWLEDGE_MS = 450,
     CONNECTING_MAX_MS = 10000,
-    ACT_FLUID_MS = 12000,
+    /* Asked for by hand, so long enough to actually play with. */
+    ACT_FLUID_MS = 30000,
     ACT_STARGAZE_MS = 9000,
     ACT_WANDER_MS = 7000,
 
@@ -42,7 +43,12 @@ enum {
     BOND_MAX = 100,
 };
 
-#define ACT_POOL_SIZE 3
+/*
+ * Only the two solitary activities are scheduled. The particle game is not one
+ * of them: it is played by tilting, so it needs a person. The pet asking for a
+ * game nobody is there to play would be a stranger thing than silence.
+ */
+#define ACT_POOL_SIZE 2
 
 /*
  * Wrap-safe comparison. A plain "now >= deadline" breaks once the millisecond
@@ -75,23 +81,19 @@ static bool is_activity(pet_behavior_id_t id)
            id == PET_ACT_WANDER;
 }
 
+/* Position in the scheduler pool, or -1 for an activity it never picks. */
 static int activity_index(pet_behavior_id_t id)
 {
     switch (id) {
-    case PET_ACT_FLUID: return 0;
-    case PET_ACT_STARGAZE: return 1;
-    case PET_ACT_WANDER: return 2;
+    case PET_ACT_STARGAZE: return 0;
+    case PET_ACT_WANDER: return 1;
     default: return -1;
     }
 }
 
 static pet_behavior_id_t activity_at(int index)
 {
-    switch (index) {
-    case 0: return PET_ACT_FLUID;
-    case 1: return PET_ACT_STARGAZE;
-    default: return PET_ACT_WANDER;
-    }
+    return (index == 0) ? PET_ACT_STARGAZE : PET_ACT_WANDER;
 }
 
 static uint32_t duration_for(pet_behavior_id_t id)
@@ -192,16 +194,6 @@ static pet_behavior_id_t pick_activity(pet_behavior_t *pet, uint32_t now_ms)
     pet_behavior_id_t oldest = PET_NEUTRAL;
     uint32_t oldest_age = 0;
 
-    /*
-     * The very first activity after power-up is always the particles. Random
-     * choice from three makes the signature animation something you wait for
-     * and might not get; this makes "switch on, leave it alone, watch" a
-     * reliable way to see it.
-     */
-    if (!pet->act_seen[0] && !pet->act_seen[1] && !pet->act_seen[2]) {
-        return PET_ACT_FLUID;
-    }
-
     for (int index = 0; index < ACT_POOL_SIZE; ++index) {
         const pet_behavior_id_t id = activity_at(index);
         if (!activity_cooled_down(pet, id, now_ms)) {
@@ -272,10 +264,15 @@ static bool start_transient(pet_behavior_t *pet,
     return true;
 }
 
-/* Any deliberate interaction cancels a self-directed activity immediately. */
+/*
+ * Any deliberate interaction cancels a self-directed activity immediately.
+ * The particle game is the exception: it was asked for, and it is played by
+ * handling the keychain, so the very act of playing must not end it.
+ */
 static void register_activity_reset(pet_behavior_t *pet, uint32_t now_ms)
 {
-    if (is_activity(pet->transient_id)) {
+    if (is_activity(pet->transient_id) &&
+        pet->transient_id != PET_ACT_FLUID) {
         finish_transient(pet, now_ms, false);
     }
     pet->last_activity_ms = now_ms;
@@ -381,15 +378,20 @@ void pet_behavior_post(pet_behavior_t *pet, pet_event_t event, uint32_t now_ms)
         break;
 
     case PET_EVENT_TILT_LEFT:
-        register_activity_reset(pet, now_ms);
-        gain_bond(pet, now_ms);
-        (void)start_transient(pet, PET_LOOK_LEFT, PET_SOURCE_MOTION, now_ms);
-        break;
-
     case PET_EVENT_TILT_RIGHT:
         register_activity_reset(pet, now_ms);
         gain_bond(pet, now_ms);
-        (void)start_transient(pet, PET_LOOK_RIGHT, PET_SOURCE_MOTION, now_ms);
+        /*
+         * During the particle game a tilt is the controller, not a request to
+         * look somewhere. Starting a P1 glance here would outrank the game and
+         * end it on the first move the player made.
+         */
+        if (pet->transient_id != PET_ACT_FLUID) {
+            (void)start_transient(pet,
+                                  (event == PET_EVENT_TILT_LEFT)
+                                      ? PET_LOOK_LEFT : PET_LOOK_RIGHT,
+                                  PET_SOURCE_MOTION, now_ms);
+        }
         break;
 
     /*
