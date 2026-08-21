@@ -43,8 +43,18 @@ typedef struct {
     int lid_slant;
     bool arc_eyes;
     bool allow_blink;
+    /*
+     * Whether the gaze should follow the live tilt. True for the resting
+     * states, so a keychain held at an angle keeps the eyes turned that way
+     * instead of snapping back to centre once a scripted reaction ends.
+     */
+    bool track_tilt;
     pet_overlay_t overlay;
 } face_frame_t;
+
+/* How far the gaze travels at full tilt, in pixels. */
+#define TILT_GAZE_RANGE_X 12
+#define TILT_GAZE_RANGE_Y 5
 
 static uint32_t s_random_state = 0x9E3779B9U;
 static uint32_t s_next_blink_ms;
@@ -270,6 +280,7 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
     frame->lid_slant = 0;
     frame->arc_eyes = false;
     frame->allow_blink = true;
+    frame->track_tilt = false;
     frame->overlay = OVERLAY_NONE;
 
     const uint32_t elapsed = view->elapsed_ms;
@@ -282,14 +293,17 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
         frame->group_dy = (int)(oscillate(now_ms, 4200U) * 1.4f);
         /* Familiarity shows up as slightly wider, friendlier eyes. */
         frame->eye_width += view->bond / 25;
+        frame->track_tilt = true;
         break;
 
     case PET_BORED:
         frame->eye_width = 24;
         frame->eye_height = 22;
         frame->lid_depth = 4;
+        /* A bored gaze wanders on its own, but a tilt still wins. */
         frame->gaze_x = (int)(oscillate(now_ms, 6400U) * 8.0f);
         frame->group_dy = 1 + (int)(oscillate(now_ms, 5000U) * 2.0f);
+        frame->track_tilt = true;
         break;
 
     case PET_ASLEEP:
@@ -308,12 +322,14 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
         frame->group_dy = 1 + (int)(oscillate(now_ms, 3000U) * 1.5f);
         /* A low battery is exactly when the actual level is worth showing. */
         frame->overlay = OVERLAY_BATTERY;
+        frame->track_tilt = true;
         break;
 
     case PET_CHARGING:
         frame->eye_height = 26;
         frame->group_dy = (int)(oscillate(now_ms, 1800U) * 2.0f);
         frame->overlay = OVERLAY_BATTERY;
+        frame->track_tilt = true;
         break;
 
     case PET_WAKE_UP: {
@@ -328,15 +344,16 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
 
     case PET_LOOK_LEFT:
     case PET_LOOK_RIGHT: {
+        /*
+         * A quick snap toward the new direction, then hold. It deliberately
+         * does not return to centre: when this expires the resting state picks
+         * the gaze up from the live tilt, so a keychain still held at an angle
+         * keeps its eyes turned rather than flicking back and forth.
+         */
         const int target = (view->id == PET_LOOK_LEFT) ? -11 : 11;
-        if (elapsed < 150U) {
-            frame->gaze_x = lerp_int(0, target, ease_out(elapsed / 150.0f));
-        } else if (elapsed < 900U) {
-            frame->gaze_x = target;
-        } else {
-            frame->gaze_x =
-                lerp_int(target, 0, ease_out((elapsed - 900U) / 300.0f));
-        }
+        frame->gaze_x = (elapsed < 150U)
+            ? lerp_int(0, target, ease_out(elapsed / 150.0f))
+            : target;
         break;
     }
 
@@ -407,6 +424,16 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
 
     default:
         break;
+    }
+
+    /*
+     * Follow the keychain. Added on top of whatever the state already does, so
+     * a bored wander still happens but a deliberate tilt pulls the gaze with
+     * it and holds it there for as long as the angle is held.
+     */
+    if (frame->track_tilt) {
+        frame->gaze_x += (view->tilt_x * TILT_GAZE_RANGE_X) / 100;
+        frame->gaze_y += (view->tilt_y * TILT_GAZE_RANGE_Y) / 100;
     }
 }
 

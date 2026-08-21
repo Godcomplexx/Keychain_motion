@@ -92,6 +92,13 @@ typedef struct {
      * voltage is the thing actually measured and is worth showing as such.
      */
     int32_t battery_millivolts;
+    /*
+     * Live tilt, -100..100 per axis. This is what lets the gaze follow the
+     * keychain while it is held at an angle, instead of only firing a canned
+     * reaction when the angle first crosses a threshold.
+     */
+    int8_t tilt_x;
+    int8_t tilt_y;
 } pet_context_t;
 
 #define PET_BATTERY_UNKNOWN 255U
@@ -108,6 +115,8 @@ typedef struct {
     uint8_t bond;
     uint8_t battery_percent;
     int32_t battery_millivolts;
+    int8_t tilt_x;
+    int8_t tilt_y;
     bool charging;
 } pet_view_t;
 

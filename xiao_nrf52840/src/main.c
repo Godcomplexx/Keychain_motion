@@ -57,6 +57,8 @@
 /* Tilt gestures need hysteresis, otherwise every frame near the edge fires. */
 #define TILT_TRIGGER_G 0.35f
 #define TILT_RELEASE_G 0.18f
+/* Below this the keychain counts as level and the gaze rests in the middle. */
+#define TILT_DEAD_ZONE_G 0.06f
 
 static const char *TAG = "keychain";
 
@@ -137,6 +139,26 @@ static bool accel_int_take(void)
 }
 
 #endif
+
+/*
+ * Turn a tilt in g into the -100..100 the face follows.
+ *
+ * A small dead zone keeps a keychain lying flat from twitching, and the caller
+ * smooths the result so the eyes glide instead of chattering at 40 frames per
+ * second.
+ */
+static int8_t tilt_to_percent(float tilt)
+{
+    const float magnitude = (tilt < 0.0f) ? -tilt : tilt;
+    if (magnitude < TILT_DEAD_ZONE_G) {
+        return 0;
+    }
+
+    int value = (int)(tilt * 100.0f);
+    if (value > 100) { value = 100; }
+    if (value < -100) { value = -100; }
+    return (int8_t)value;
+}
 
 /*
  * Convert a raw tilt reading into -1, 0 or +1 with hysteresis: the gesture only
@@ -314,6 +336,8 @@ int main(void)
     float demo_tilt = -0.7f;
     float last_tilt_x = 0.0f;
     int previous_tilt_zone = 0;
+    int smoothed_tilt_x = 0;
+    int smoothed_tilt_y = 0;
     bool previous_charger_attached = false;
     bool sensorless_ble_announced = false;
     int64_t last_battery_sample_us = 0;
@@ -627,6 +651,14 @@ int main(void)
         last_tilt_x = tilt_x;
 
         /*
+         * Smooth the live tilt the face follows. Raw samples jitter by a few
+         * counts, and at 40 frames per second that reads as trembling eyes
+         * rather than as a steady gaze.
+         */
+        smoothed_tilt_x = (smoothed_tilt_x * 3 + tilt_to_percent(tilt_x)) / 4;
+        smoothed_tilt_y = (smoothed_tilt_y * 3 + tilt_to_percent(tilt_y)) / 4;
+
+        /*
          * A hardware edge on ACC_INT1 means the sensor itself decided the
          * keychain moved, which is exactly the "picked up" moment.
          */
@@ -674,6 +706,9 @@ int main(void)
             .charging = charger_attached,
             .battery_percent = battery_percent,
             .battery_millivolts = battery_millivolts,
+            /* Only a real sensor may steer the gaze; the demo wave must not. */
+            .tilt_x = sensor_sample_valid ? (int8_t)smoothed_tilt_x : 0,
+            .tilt_y = sensor_sample_valid ? (int8_t)smoothed_tilt_y : 0,
         };
         pet_behavior_update(&pet, &pet_context, now_ms);
         const pet_view_t *pet_view = pet_behavior_view(&pet);
