@@ -51,6 +51,31 @@ static unsigned int scan_once(const struct device *bus, const char *speed_name)
     return found;
 }
 
+/*
+ * Talk to the display the way its driver does, and report the exact error.
+ *
+ * An address scan uses synthetic transactions, so it can in principle miss a
+ * device that only answers a real one. This sends an actual SSD1306 command
+ * frame - a 0x00 control byte followed by NOP - which is precisely what the
+ * driver's first write looks like. If this is NACKed, the part is not
+ * answering, and no amount of driver configuration will change that.
+ */
+static void probe_oled_directly(const struct device *bus)
+{
+    const uint8_t command[] = {0x00U, 0xE3U};  /* control byte, then NOP */
+    const int result = i2c_write(bus, command, sizeof(command),
+                                 BOARD_OLED_I2C_ADDRESS);
+
+    if (result == 0) {
+        ESP_LOGI(TAG, "OLED at 0x%02X answered a real command write",
+                 BOARD_OLED_I2C_ADDRESS);
+    } else {
+        ESP_LOGW(TAG, "OLED at 0x%02X did not answer a command write: %d "
+                 "(-5 = no acknowledge from the bus)",
+                 BOARD_OLED_I2C_ADDRESS, result);
+    }
+}
+
 void i2c_scan_log(void)
 {
     const struct device *const bus = DEVICE_DT_GET(BOARD_I2C_NODE);
@@ -60,6 +85,16 @@ void i2c_scan_log(void)
         return;
     }
 
+    /*
+     * A slave interrupted mid-read can hold SDA low and lock the bus for
+     * everyone. Clocking it out costs nothing when the bus is already idle.
+     */
+    const int recovered = i2c_recover_bus(bus);
+    if (recovered != 0) {
+        ESP_LOGW(TAG, "Bus recovery returned %d", recovered);
+    }
+
+    probe_oled_directly(bus);
     (void)scan_once(bus, "400 kHz");
 
     /*
