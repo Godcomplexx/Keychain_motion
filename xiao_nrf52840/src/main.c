@@ -64,7 +64,12 @@
  * Tip it steeply and hold, like tipping a glass, and the particles come out.
  * Steep enough and long enough that ordinary handling cannot do it by accident.
  */
-#define PLAY_GESTURE_TILT_G 0.80f
+/*
+ * 0.70 g is about 44 degrees from flat. Steeper than that is awkward while the
+ * board still has a display and a USB cable hanging off it, and the keychain
+ * already rests near 0.38 g, so this is a clear deliberate tip either way.
+ */
+#define PLAY_GESTURE_TILT_G 0.70f
 #define PLAY_GESTURE_HOLD_US 1500000
 
 /*
@@ -790,16 +795,28 @@ int main(void)
          * Hold it steeply tipped to ask for the particles. The latch makes the
          * gesture fire once per tip rather than continuously while held.
          */
-        if (sensor_sample_valid &&
-            (tilt_x >= PLAY_GESTURE_TILT_G || tilt_x <= -PLAY_GESTURE_TILT_G)) {
+        /*
+         * Measured across both horizontal axes rather than along X alone. The
+         * keychain does not rest perfectly flat, so a single-axis threshold is
+         * nearly reached in one direction and unreachable in the other; the
+         * combined tilt asks the same thing of every direction.
+         */
+        const float sideways = sensor_sample_valid
+            ? sqrtf(tilt_x * tilt_x + tilt_y * tilt_y) : 0.0f;
+        if (sensor_sample_valid && sideways >= PLAY_GESTURE_TILT_G) {
             if (play_gesture_started_us == 0) {
                 play_gesture_started_us = now_us;
+                /* Say so, so a tip that is deep enough but too brief is
+                 * distinguishable from one that never got deep enough. */
+                ESP_LOGI(TAG, "Play gesture: tilted far enough (%.2f g), hold",
+                         (double)sideways);
             } else if (!play_gesture_fired &&
                        now_us - play_gesture_started_us >=
                            PLAY_GESTURE_HOLD_US) {
                 play_gesture_fired = true;
                 pet_behavior_post(&pet, PET_EVENT_PLAY_REQUESTED, now_ms);
-                ESP_LOGI(TAG, "Play gesture: particles requested");
+                ESP_LOGI(TAG, "Play gesture: particles requested (%.2f g)",
+                         (double)sideways);
             }
         } else {
             play_gesture_started_us = 0;
