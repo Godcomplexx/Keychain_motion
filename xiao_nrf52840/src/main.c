@@ -83,10 +83,12 @@
 /*
  * Gravity pointing the wrong way along Z, held long enough to be deliberate.
  *
- * The sign is a property of how the LIS2DW12 sits in its package on this board,
- * not something derivable from the layout - U5 is on the top layer like
- * everything else. Measured resting face-up: Z = -0.88 g. So positive Z is the
- * inverted one here.
+ * Which sign means inverted cannot be worked out from the layout - U5 sits on
+ * the top layer along with everything else - nor from a reading alone, because
+ * a reading only says where the board is, not which way it is supposed to be.
+ * Samples taken minutes apart showed Z = -0.88 g and Z = +0.91 g, both while
+ * resting. So this follows the person holding it: negative Z is inverted.
+ * The trigger logs its Z, which makes checking it a glance rather than a guess.
  */
 #define UPSIDE_DOWN_G 0.55f
 #define UPSIDE_DOWN_HOLD_US 600000
@@ -748,11 +750,15 @@ int main(void)
             }
 
             /* Held inverted, long enough that it is not a passing wave. */
-            if (tilt_z >= UPSIDE_DOWN_G) {
+            if (tilt_z <= -UPSIDE_DOWN_G) {
                 if (upside_down_started_us == 0) {
                     upside_down_started_us = now_us;
                 } else if (now_us - upside_down_started_us >=
                            UPSIDE_DOWN_HOLD_US) {
+                    if (!upside_down) {
+                        ESP_LOGI(TAG, "Upside down (Z = %.2f g)",
+                                 (double)tilt_z);
+                    }
                     upside_down = true;
                 }
             } else {
