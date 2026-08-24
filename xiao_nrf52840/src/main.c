@@ -80,7 +80,14 @@
 #define FREE_FALL_HOLD_US 80000
 #define FREE_FALL_REARM_US 1500000
 
-/* Gravity pointing the wrong way along Z, held long enough to be deliberate. */
+/*
+ * Gravity pointing the wrong way along Z, held long enough to be deliberate.
+ *
+ * The sign is a property of how the LIS2DW12 sits in its package on this board,
+ * not something derivable from the layout - U5 is on the top layer like
+ * everything else. Measured resting face-up: Z = -0.88 g. So positive Z is the
+ * inverted one here.
+ */
 #define UPSIDE_DOWN_G 0.55f
 #define UPSIDE_DOWN_HOLD_US 600000
 
@@ -741,7 +748,7 @@ int main(void)
             }
 
             /* Held inverted, long enough that it is not a passing wave. */
-            if (tilt_z <= -UPSIDE_DOWN_G) {
+            if (tilt_z >= UPSIDE_DOWN_G) {
                 if (upside_down_started_us == 0) {
                     upside_down_started_us = now_us;
                 } else if (now_us - upside_down_started_us >=
