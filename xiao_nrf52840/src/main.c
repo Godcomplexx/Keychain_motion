@@ -131,8 +131,18 @@
  */
 #define ROCKING_MIN_TILT_G 0.12f
 #define ROCKING_MAX_TILT_G 0.70f
-#define ROCKING_REVERSALS_REQUIRED 4
-#define ROCKING_WINDOW_US 5000000
+/*
+ * Six reversals is three full there-and-back cycles. Fewer than that and a
+ * couple of deliberate tilts counted as rocking, so tilting left and right
+ * stopped producing glances and went straight to the soothed face.
+ */
+#define ROCKING_REVERSALS_REQUIRED 6
+/*
+ * And they have to arrive in rhythm. Rocking is continuous; a deliberate tilt
+ * dwells at the extreme and comes back when it is ready. Requiring each
+ * reversal within a second and a half of the last is what separates the two.
+ */
+#define ROCKING_WINDOW_US 1500000
 /*
  * Once rocking is recognised it stays recognised for this long, and every
  * further reversal extends it. Resetting the count on a fixed window made the
