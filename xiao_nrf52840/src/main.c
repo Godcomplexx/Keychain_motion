@@ -98,6 +98,17 @@
 #define UPSIDE_DOWN_HOLD_US 600000
 /* Ignore near-vertical startups, where Z carries no orientation information. */
 #define UPRIGHT_REFERENCE_MIN_G 0.40f
+/*
+ * Learning only at startup is not enough: the board reboots on every firmware
+ * update, in whatever position it happened to be lying, and a wrong reference
+ * then sticks until someone power-cycles it deliberately.
+ *
+ * So it also re-learns from a long motionless rest. Whatever the keychain has
+ * been lying in, untouched, for a solid minute is what normal looks like -
+ * nobody holds one inverted and perfectly still for that long, so the reaction
+ * survives while a reference learned at a bad moment heals itself.
+ */
+#define UPRIGHT_RELEARN_STILL_US 60000000
 
 /*
  * Rocking is slow, gentle and repetitive: several direction changes inside a
@@ -763,6 +774,21 @@ int main(void)
                 upright_z_sign = (tilt_z > 0.0f) ? 1 : -1;
                 ESP_LOGI(TAG, "Upright reference learned: Z = %.2f g",
                          (double)tilt_z);
+            }
+
+            /* A long undisturbed rest redefines which way up is normal. */
+            if (detector_result.stillness_us >= UPRIGHT_RELEARN_STILL_US &&
+                (tilt_z >= UPRIGHT_REFERENCE_MIN_G ||
+                 tilt_z <= -UPRIGHT_REFERENCE_MIN_G)) {
+                const int resting_sign = (tilt_z > 0.0f) ? 1 : -1;
+                if (resting_sign != upright_z_sign) {
+                    upright_z_sign = resting_sign;
+                    upside_down = false;
+                    upside_down_started_us = 0;
+                    ESP_LOGI(TAG,
+                             "Upright reference relearned after a still minute:"
+                             " Z = %.2f g", (double)tilt_z);
+                }
             }
 
             /* Held inverted relative to that, long enough to be deliberate. */
