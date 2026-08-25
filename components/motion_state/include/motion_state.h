@@ -9,6 +9,8 @@ typedef enum {
     MOTION_STATE_SLEEP,
     MOTION_STATE_TIME,
     MOTION_STATE_GAME,
+    /* The phone draws on the screen; the keychain is the paper. */
+    MOTION_STATE_DRAW,
 } motion_state_t;
 
 typedef enum {
@@ -20,6 +22,8 @@ typedef enum {
     MOTION_EVENT_TIME_TIMEOUT,
     MOTION_EVENT_GAME_REQUESTED,
     MOTION_EVENT_GAME_FINISHED,
+    MOTION_EVENT_DRAW_REQUESTED,
+    MOTION_EVENT_DRAW_FINISHED,
 } motion_event_t;
 
 typedef struct {

@@ -16,6 +16,7 @@
 #include "board_config.h"
 #include "breakout_game.h"
 #include "device_clock.h"
+#include "draw_pad.h"
 #include "flip_animation.h"
 #include "i2c_bus.h"
 #include "idle_animation.h"
@@ -64,6 +65,8 @@
 #define MOTION_SHAKE_COUNT_REQUIRED 3
 #define MOTION_SHAKE_WINDOW_US 2500000
 #define PHONE_SYNC_WINDOW_US 60000000
+/* Drawing ends by itself if the phone stops sending; see the v2 note. */
+#define DRAW_IDLE_TIMEOUT_US 300000000
 #define PHONE_SYNC_SHUTDOWN_GRACE_MS 200
 #define CPU_MAX_FREQUENCY_MHZ 160
 #define CPU_MIN_FREQUENCY_MHZ 40
@@ -254,6 +257,13 @@ static esp_err_t apply_state_entry_actions(motion_state_t state,
         *previous_frame_us = now_us;
         break;
 
+    case MOTION_STATE_DRAW:
+        ESP_RETURN_ON_ERROR(oled_display_set_power(true),
+                            TAG, "OLED draw power setup failed");
+        ESP_RETURN_ON_ERROR(oled_display_set_contrast(OLED_ACTIVE_CONTRAST),
+                            TAG, "OLED draw contrast setup failed");
+        break;
+
     default:
         break;
     }
@@ -390,6 +400,9 @@ void app_main(void)
     motion_detector_t motion_detector;
     motion_state_machine_t motion_state;
     breakout_game_t breakout_game;
+    draw_pad_t draw_pad;
+    draw_pad_init(&draw_pad);
+    int64_t last_draw_packet_us = 0;
     uint8_t display_render_failure_count = 0;
     float last_tilt_x = 0.0f;
 
@@ -460,6 +473,23 @@ void app_main(void)
                                     esp_random(),
                                     last_tilt_x);
                 ESP_LOGW(TAG, "Breakout started from phone command");
+            } else if (phone_command == PHONE_SYNC_COMMAND_START_DRAW) {
+                /* The opposite of the game: the radio is the whole point. */
+                draw_pad_clear(&draw_pad);
+                last_draw_packet_us = current_frame_us;
+                current_state = motion_state_handle_event(
+                    &motion_state,
+                    MOTION_EVENT_DRAW_REQUESTED,
+                    true,
+                    current_frame_us);
+                ESP_LOGW(TAG, "Draw pad opened from phone command");
+            } else if (phone_command == PHONE_SYNC_COMMAND_STOP_DRAW) {
+                current_state = motion_state_handle_event(
+                    &motion_state,
+                    MOTION_EVENT_DRAW_FINISHED,
+                    true,
+                    current_frame_us);
+                ESP_LOGW(TAG, "Draw pad closed from phone command");
             } else if (phone_command == PHONE_SYNC_COMMAND_SHOW_TIME) {
                 /*
                  * Asked for by hand. The radio stays up: the person is holding
@@ -508,6 +538,43 @@ void app_main(void)
                      (unsigned int)phone_datetime.hour,
                      (unsigned int)phone_datetime.minute,
                      (unsigned int)phone_datetime.second);
+        }
+
+        if (current_state == MOTION_STATE_DRAW) {
+            phone_sync_draw_packet_t draw_packet;
+            while (phone_sync_get_draw_packet(&draw_packet)) {
+                (void)draw_pad_apply_packet(&draw_pad,
+                                            draw_packet.data,
+                                            draw_packet.length);
+                last_draw_packet_us = current_frame_us;
+            }
+
+            /*
+             * Two ways out that do not involve the phone asking: it hung up, or
+             * it stopped talking. Without these the screen would stay on
+             * someone's drawing until the battery ran out.
+             */
+            const bool phone_gone = !phone_sync_is_connected();
+            const bool gone_quiet =
+                current_frame_us - last_draw_packet_us >= DRAW_IDLE_TIMEOUT_US;
+            if (phone_gone || gone_quiet) {
+                current_state = motion_state_handle_event(
+                    &motion_state,
+                    MOTION_EVENT_DRAW_FINISHED,
+                    true,
+                    current_frame_us);
+                err = apply_state_entry_actions(current_state,
+                                                current_frame_us,
+                                                &previous_frame_us,
+                                                &previous_sleep_frame_us,
+                                                &sleep_frame_index,
+                                                &previous_time_frame_us);
+                if (err != ESP_OK) {
+                    break;
+                }
+                ESP_LOGW(TAG, "Draw pad closed: %s",
+                         phone_gone ? "phone disconnected" : "no packets");
+            }
         }
 
         if (current_state == MOTION_STATE_TIME &&
@@ -736,6 +803,17 @@ void app_main(void)
                 continue;
             }
             vTaskDelay(pdMS_TO_TICKS(LOW_POWER_LOOP_DELAY_MS));
+            break;
+
+        case MOTION_STATE_DRAW:
+            err = draw_pad_render(&draw_pad);
+            if (!display_render_succeeded_or_deferred(
+                    "Draw",
+                    err,
+                    &display_render_failure_count)) {
+                continue;
+            }
+            vTaskDelay(pdMS_TO_TICKS(ACTIVE_FRAME_DELAY_MS));
             break;
 
         case MOTION_STATE_GAME: {

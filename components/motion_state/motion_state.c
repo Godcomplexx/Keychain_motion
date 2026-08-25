@@ -66,6 +66,8 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
     case MOTION_STATE_FLUID:
         if (event == MOTION_EVENT_GAME_REQUESTED) {
             transition_to(machine, MOTION_STATE_GAME, event, now_us);
+        } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
+            transition_to(machine, MOTION_STATE_DRAW, event, now_us);
         } else if (event == MOTION_EVENT_TIME_REQUESTED) {
             transition_to(machine, MOTION_STATE_TIME, event, now_us);
         } else if (event == MOTION_EVENT_STILLNESS_TIMEOUT) {
@@ -76,6 +78,8 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
     case MOTION_STATE_SLEEP:
         if (event == MOTION_EVENT_GAME_REQUESTED) {
             transition_to(machine, MOTION_STATE_GAME, event, now_us);
+        } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
+            transition_to(machine, MOTION_STATE_DRAW, event, now_us);
         } else if (event == MOTION_EVENT_TIME_REQUESTED) {
             transition_to(machine, MOTION_STATE_TIME, event, now_us);
         } else if (event == MOTION_EVENT_MOVEMENT_DETECTED) {
@@ -86,6 +90,8 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
     case MOTION_STATE_TIME:
         if (event == MOTION_EVENT_GAME_REQUESTED) {
             transition_to(machine, MOTION_STATE_GAME, event, now_us);
+        } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
+            transition_to(machine, MOTION_STATE_DRAW, event, now_us);
         } else if (event == MOTION_EVENT_TIME_TIMEOUT) {
             /* After TIME, choose the next state from recent real motion. */
             transition_to(machine,
@@ -99,6 +105,21 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
     case MOTION_STATE_GAME:
         if (event == MOTION_EVENT_GAME_FINISHED) {
             transition_to(machine, MOTION_STATE_FLUID, event, now_us);
+        }
+        break;
+
+    case MOTION_STATE_DRAW:
+        /*
+         * Drawing ends only when the phone says so, hangs up, or falls silent.
+         * Movement must not end it: the keychain is held in one hand while the
+         * other draws, so it is being jostled the whole time.
+         */
+        if (event == MOTION_EVENT_DRAW_FINISHED) {
+            transition_to(machine, MOTION_STATE_FLUID, event, now_us);
+        } else if (event == MOTION_EVENT_GAME_REQUESTED) {
+            transition_to(machine, MOTION_STATE_GAME, event, now_us);
+        } else if (event == MOTION_EVENT_TIME_REQUESTED) {
+            transition_to(machine, MOTION_STATE_TIME, event, now_us);
         }
         break;
 
@@ -122,6 +143,8 @@ const char *motion_state_name(motion_state_t state)
         return "TIME";
     case MOTION_STATE_GAME:
         return "GAME";
+    case MOTION_STATE_DRAW:
+        return "DRAW";
     default:
         return "UNKNOWN";
     }
@@ -146,6 +169,10 @@ const char *motion_event_name(motion_event_t event)
         return "GAME_REQUESTED";
     case MOTION_EVENT_GAME_FINISHED:
         return "GAME_FINISHED";
+    case MOTION_EVENT_DRAW_REQUESTED:
+        return "DRAW_REQUESTED";
+    case MOTION_EVENT_DRAW_FINISHED:
+        return "DRAW_FINISHED";
     default:
         return "UNKNOWN";
     }

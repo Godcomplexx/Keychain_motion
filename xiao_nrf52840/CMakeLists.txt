@@ -15,6 +15,7 @@ target_sources(app PRIVATE
     src/usb_dfu_touch.c
     ${KEYCHAIN_ROOT}/components/breakout_game/breakout_game.c
     ${KEYCHAIN_ROOT}/components/device_clock/device_clock.c
+    ${KEYCHAIN_ROOT}/components/draw_pad/draw_pad.c
     ${KEYCHAIN_ROOT}/components/flip_animation/flip_animation.c
     ${KEYCHAIN_ROOT}/components/fluid_animation/fluid_animation.c
     ${KEYCHAIN_ROOT}/components/idle_animation/idle_animation.c
@@ -29,6 +30,7 @@ target_include_directories(app PRIVATE
     include
     ${KEYCHAIN_ROOT}/components/breakout_game/include
     ${KEYCHAIN_ROOT}/components/device_clock/include
+    ${KEYCHAIN_ROOT}/components/draw_pad/include
     ${KEYCHAIN_ROOT}/components/flip_animation/include
     ${KEYCHAIN_ROOT}/components/fluid_animation/include
     ${KEYCHAIN_ROOT}/components/idle_animation/include

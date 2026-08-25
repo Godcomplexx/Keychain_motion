@@ -2,6 +2,7 @@
 #define PHONE_SYNC_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "device_clock.h"
 #include "esp_err.h"
@@ -16,7 +17,25 @@ typedef enum {
      * person makes, so it has a command of its own.
      */
     PHONE_SYNC_COMMAND_SHOW_TIME,
+    /* The phone opened its drawing pad, and later closed it. */
+    PHONE_SYNC_COMMAND_START_DRAW,
+    PHONE_SYNC_COMMAND_STOP_DRAW,
 } phone_sync_command_t;
+
+/*
+ * Drawing has a characteristic of its own, written without a response. The
+ * command characteristic is text and answers every write, which is the right
+ * shape for "show the clock" and the wrong one for a finger moving: an
+ * acknowledged write per packet halves the rate and the stroke visibly lags
+ * the finger.
+ */
+#define PHONE_SYNC_DRAW_PACKET_MAX 244
+#define PHONE_SYNC_DRAW_QUEUE_LENGTH 8
+
+typedef struct {
+    uint8_t length;
+    uint8_t data[PHONE_SYNC_DRAW_PACKET_MAX];
+} phone_sync_draw_packet_t;
 
 esp_err_t phone_sync_init(void);
 
@@ -36,5 +55,14 @@ bool phone_sync_get_command(phone_sync_command_t *command);
  * the phone is simply here, which is worth greeting before it says anything.
  */
 bool phone_sync_take_connected_event(void);
+
+/*
+ * True while a phone is connected. Drawing needs this: if the phone walks away
+ * mid-stroke, nothing else would ever take the screen back.
+ */
+bool phone_sync_is_connected(void);
+
+/* Takes the oldest queued drawing packet. False when the queue is empty. */
+bool phone_sync_get_draw_packet(phone_sync_draw_packet_t *packet);
 
 #endif /* PHONE_SYNC_H */

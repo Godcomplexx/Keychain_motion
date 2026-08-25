@@ -14,6 +14,7 @@
 
 #include "breakout_game.h"
 #include "device_clock.h"
+#include "draw_pad.h"
 #include "esp_log.h"
 #include "flip_animation.h"
 #include "motion_detector.h"
@@ -52,6 +53,12 @@
 #define MOTION_SHAKE_COUNT_REQUIRED 3
 #define MOTION_SHAKE_WINDOW_US 2500000
 #define PHONE_SYNC_SHUTDOWN_GRACE_MS 200
+/*
+ * Drawing ends by itself if the phone stops sending. Long enough that thinking
+ * about what to draw does not close the pad, short enough that a phone which
+ * crashed does not leave the screen stuck on someone's picture.
+ */
+#define DRAW_IDLE_TIMEOUT_US 300000000
 #define OLED_ACTIVE_CONTRAST 0x9F
 #define OLED_GAME_CONTRAST 0x8F
 #define OLED_IDLE_CONTRAST 0x18
@@ -465,6 +472,9 @@ static void apply_state_entry_actions(motion_state_t state,
         (void)oled_display_set_contrast(OLED_GAME_CONTRAST);
         *previous_frame_us = now_us;
         break;
+    case MOTION_STATE_DRAW:
+        (void)oled_display_set_contrast(OLED_ACTIVE_CONTRAST);
+        break;
     default:
         break;
     }
@@ -566,6 +576,9 @@ int main(void)
     motion_state_machine_t state_machine;
     motion_state_init(&state_machine, now_us);
     breakout_game_t game;
+    draw_pad_t pad;
+    draw_pad_init(&pad);
+    int64_t last_draw_packet_us = 0;
 
     /* The companion behaviour engine keeps its own clock in milliseconds. */
     pet_behavior_t pet;
@@ -733,6 +746,20 @@ int main(void)
                 current_state = motion_state_handle_event(
                     &state_machine, MOTION_EVENT_TIME_REQUESTED, true, now_us);
                 ESP_LOGW(TAG, "Clock shown on request");
+            } else if (command == PHONE_SYNC_COMMAND_START_DRAW) {
+                /*
+                 * The opposite of the game: the radio is the whole point, since
+                 * every stroke arrives over it.
+                 */
+                draw_pad_clear(&pad);
+                last_draw_packet_us = now_us;
+                current_state = motion_state_handle_event(
+                    &state_machine, MOTION_EVENT_DRAW_REQUESTED, true, now_us);
+                ESP_LOGW(TAG, "Draw pad opened from phone command");
+            } else if (command == PHONE_SYNC_COMMAND_STOP_DRAW) {
+                current_state = motion_state_handle_event(
+                    &state_machine, MOTION_EVENT_DRAW_FINISHED, true, now_us);
+                ESP_LOGW(TAG, "Draw pad closed from phone command");
             }
 
             if (current_state != previous_state) {
@@ -742,6 +769,33 @@ int main(void)
                                           &previous_time_frame_us);
             } else if (current_state == MOTION_STATE_TIME) {
                 previous_time_frame_us = 0;
+            }
+        }
+
+        if (current_state == MOTION_STATE_DRAW) {
+            phone_sync_draw_packet_t packet;
+            while (phone_sync_get_draw_packet(&packet)) {
+                (void)draw_pad_apply_packet(&pad, packet.data, packet.length);
+                last_draw_packet_us = now_us;
+            }
+
+            /*
+             * Two ways out that do not involve the phone asking: it hung up, or
+             * it stopped talking. Without these the screen would stay on
+             * someone's drawing until the battery ran out.
+             */
+            const bool phone_gone = !phone_sync_is_connected();
+            const bool gone_quiet =
+                now_us - last_draw_packet_us >= DRAW_IDLE_TIMEOUT_US;
+            if (phone_gone || gone_quiet) {
+                current_state = motion_state_handle_event(
+                    &state_machine, MOTION_EVENT_DRAW_FINISHED, true, now_us);
+                apply_state_entry_actions(current_state, now_us,
+                                          &previous_frame_us,
+                                          &previous_sleep_frame_us,
+                                          &previous_time_frame_us);
+                ESP_LOGW(TAG, "Draw pad closed: %s",
+                         phone_gone ? "phone disconnected" : "no packets");
             }
         }
 
@@ -1184,6 +1238,19 @@ int main(void)
                 &previous_time_frame_us, &clock);
             log_render_error("TIME", render_err);
             k_sleep(K_MSEC(LOW_POWER_LOOP_DELAY_MS));
+            break;
+        case MOTION_STATE_DRAW:
+            if (oled_display_is_available()) {
+                render_err = draw_pad_render(&pad);
+            }
+            log_render_error("DRAW", render_err);
+            /*
+             * Faster than the game loop: the whole point is that the stroke
+             * appears while the finger is still moving. draw_pad_render only
+             * touches the panel when a packet actually changed something, so an
+             * idle pad costs nothing but this sleep.
+             */
+            k_sleep(K_MSEC(ACTIVE_FRAME_DELAY_MS));
             break;
         case MOTION_STATE_GAME: {
             bool game_finished = false;

@@ -30,6 +30,7 @@ public class MainActivity extends Activity {
     private Button autoButton;
     private Button timeButton;
     private Button gameButton;
+    private Button drawButton;
     private KeychainBleSync bleSync;
     private boolean autoSyncEnabled;
     /* What to say when the current manual operation succeeds. */
@@ -61,6 +62,7 @@ public class MainActivity extends Activity {
         autoButton.setOnClickListener(view -> toggleAutoSync());
         timeButton.setOnClickListener(view -> showTime());
         gameButton.setOnClickListener(view -> startBreakout());
+        drawButton.setOnClickListener(view -> openDrawPad());
         autoSyncEnabled = SyncPreferences.isAutoSyncEnabled(this);
         updateAutoSyncUi();
         setStatus(autoSyncEnabled ? "Watching in background" : "Ready");
@@ -137,6 +139,13 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(52)));
 
+        drawButton = new Button(this);
+        drawButton.setText("Draw pad");
+        drawButton.setAllCaps(false);
+        root.addView(drawButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(52)));
+
         logText = new TextView(this);
         logText.setTextSize(14);
         logText.setTextColor(0xFF162321);
@@ -171,6 +180,17 @@ public class MainActivity extends Activity {
         manualSuccessStatus = "Synced";
         setStatus("Scanning");
         bleSync.start();
+    }
+
+    private void openDrawPad() {
+        if (!hasRequiredPermissions()) {
+            requestRequiredPermissions();
+            return;
+        }
+
+        /* The pad keeps its own connection open, so it does not go through the
+         * one-shot command path the other buttons use. */
+        startActivity(DrawActivity.intent(this));
     }
 
     private void showTime() {
@@ -253,7 +273,8 @@ public class MainActivity extends Activity {
 
     private void updateAutoSyncUi() {
         if (autoButton == null || syncButton == null ||
-            gameButton == null || timeButton == null) {
+            gameButton == null || timeButton == null ||
+            drawButton == null) {
             return;
         }
         autoButton.setText(autoSyncEnabled
@@ -264,6 +285,7 @@ public class MainActivity extends Activity {
         autoButton.setEnabled(!manualOperationRunning);
         timeButton.setEnabled(!manualOperationRunning);
         gameButton.setEnabled(!manualOperationRunning);
+        drawButton.setEnabled(!manualOperationRunning);
     }
 
     private boolean hasRequiredPermissions() {
@@ -317,6 +339,7 @@ public class MainActivity extends Activity {
             autoButton.setEnabled(!busy);
             timeButton.setEnabled(!busy);
             gameButton.setEnabled(!busy);
+            drawButton.setEnabled(!busy);
         });
     }
 

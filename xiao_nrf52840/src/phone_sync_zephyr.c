@@ -33,6 +33,15 @@ static struct bt_uuid_128 s_service_uuid = BT_UUID_INIT_128(
 static struct bt_uuid_128 s_characteristic_uuid = BT_UUID_INIT_128(
     BT_UUID_128_ENCODE(0x11223344, 0x5566, 0x7788, 0x9a49,
                        0x315b10371343));
+static struct bt_uuid_128 s_draw_uuid = BT_UUID_INIT_128(
+    BT_UUID_128_ENCODE(0x11223344, 0x5566, 0x7788, 0x9a49,
+                       0x315b10371344));
+
+/* Written from the Bluetooth thread, drained by the application loop. */
+static phone_sync_draw_packet_t s_draw_queue[PHONE_SYNC_DRAW_QUEUE_LENGTH];
+static uint8_t s_draw_head;
+static uint8_t s_draw_tail;
+static uint32_t s_draw_dropped;
 
 static bool is_digit(char value)
 {
@@ -96,7 +105,8 @@ static ssize_t read_characteristic(struct bt_conn *conn,
                                    uint16_t length,
                                    uint16_t offset)
 {
-    static const char help[] = "time, TIME:SHOW or GAME:START";
+    static const char help[] =
+        "time, TIME:SHOW, GAME:START, DRAW:START or DRAW:STOP";
     return bt_gatt_attr_read(conn, attr, buffer, length, offset,
                              help, sizeof(help) - 1U);
 }
@@ -128,6 +138,25 @@ static ssize_t write_characteristic(struct bt_conn *conn,
         return length;
     }
 
+    if (strcmp(text, "DRAW:START") == 0) {
+        k_mutex_lock(&s_state_lock, K_FOREVER);
+        s_pending_command = PHONE_SYNC_COMMAND_START_DRAW;
+        s_draw_head = 0U;
+        s_draw_tail = 0U;
+        s_draw_dropped = 0U;
+        k_mutex_unlock(&s_state_lock);
+        ESP_LOGW(TAG, "Draw pad opened");
+        return length;
+    }
+
+    if (strcmp(text, "DRAW:STOP") == 0) {
+        k_mutex_lock(&s_state_lock, K_FOREVER);
+        s_pending_command = PHONE_SYNC_COMMAND_STOP_DRAW;
+        k_mutex_unlock(&s_state_lock);
+        ESP_LOGW(TAG, "Draw pad closed");
+        return length;
+    }
+
     if (strcmp(text, "GAME:START") == 0) {
         k_mutex_lock(&s_state_lock, K_FOREVER);
         s_pending_command = PHONE_SYNC_COMMAND_START_GAME;
@@ -150,6 +179,44 @@ static ssize_t write_characteristic(struct bt_conn *conn,
     return length;
 }
 
+static ssize_t write_draw_characteristic(struct bt_conn *conn,
+                                         const struct bt_gatt_attr *attr,
+                                         const void *buffer,
+                                         uint16_t length,
+                                         uint16_t offset,
+                                         uint8_t flags)
+{
+    ARG_UNUSED(conn);
+    ARG_UNUSED(attr);
+    ARG_UNUSED(flags);
+
+    if (offset != 0U || length == 0U ||
+        length > PHONE_SYNC_DRAW_PACKET_MAX) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+
+    k_mutex_lock(&s_state_lock, K_FOREVER);
+    const uint8_t next = (uint8_t)((s_draw_tail + 1U) %
+                                   PHONE_SYNC_DRAW_QUEUE_LENGTH);
+    if (next == s_draw_head) {
+        /*
+         * Full. Dropping the newest packet loses the end of a stroke; dropping
+         * the oldest would lose its start and leave the rest hanging off
+         * whatever came before. Neither is good, so the queue is sized to make
+         * this rare and the count is logged when it is not.
+         */
+        ++s_draw_dropped;
+        k_mutex_unlock(&s_state_lock);
+        return length;
+    }
+
+    s_draw_queue[s_draw_tail].length = (uint8_t)length;
+    memcpy(s_draw_queue[s_draw_tail].data, buffer, length);
+    s_draw_tail = next;
+    k_mutex_unlock(&s_state_lock);
+    return length;
+}
+
 BT_GATT_SERVICE_DEFINE(
     keychain_service,
     BT_GATT_PRIMARY_SERVICE(&s_service_uuid.uuid),
@@ -158,6 +225,12 @@ BT_GATT_SERVICE_DEFINE(
                            BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
                            read_characteristic,
                            write_characteristic,
+                           NULL),
+    BT_GATT_CHARACTERISTIC(&s_draw_uuid.uuid,
+                           BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+                           BT_GATT_PERM_WRITE,
+                           NULL,
+                           write_draw_characteristic,
                            NULL));
 
 static void connected(struct bt_conn *connection, uint8_t error)
@@ -185,6 +258,9 @@ static void disconnected(struct bt_conn *connection, uint8_t reason)
         bt_conn_unref(s_connection);
         s_connection = NULL;
     }
+    /* Half a stroke from a phone that has left is not worth drawing. */
+    s_draw_head = 0U;
+    s_draw_tail = 0U;
     k_mutex_unlock(&s_state_lock);
     ESP_LOGI(TAG, "Phone disconnected: reason=%u", reason);
 }
@@ -304,6 +380,38 @@ bool phone_sync_get_datetime_update(device_clock_datetime_t *datetime)
     }
     k_mutex_unlock(&s_state_lock);
     return has_update;
+}
+
+bool phone_sync_is_connected(void)
+{
+    k_mutex_lock(&s_state_lock, K_FOREVER);
+    const bool connected = s_connection != NULL;
+    k_mutex_unlock(&s_state_lock);
+    return connected;
+}
+
+bool phone_sync_get_draw_packet(phone_sync_draw_packet_t *packet)
+{
+    if (packet == NULL) {
+        return false;
+    }
+
+    k_mutex_lock(&s_state_lock, K_FOREVER);
+    const bool has_packet = s_draw_head != s_draw_tail;
+    if (has_packet) {
+        *packet = s_draw_queue[s_draw_head];
+        s_draw_head = (uint8_t)((s_draw_head + 1U) %
+                                PHONE_SYNC_DRAW_QUEUE_LENGTH);
+    }
+    const uint32_t dropped = s_draw_dropped;
+    s_draw_dropped = 0U;
+    k_mutex_unlock(&s_state_lock);
+
+    if (dropped != 0U) {
+        ESP_LOGW(TAG, "Draw queue overflowed: %u packets dropped",
+                 (unsigned int)dropped);
+    }
+    return has_packet;
 }
 
 bool phone_sync_take_connected_event(void)

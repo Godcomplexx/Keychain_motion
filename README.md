@@ -146,7 +146,8 @@ is always happening. Soldering the sensor later needs no firmware change.
 the clock whenever it was shaken and counted steps all day. Version 2 does
 neither. Setting the clock over BLE is silent - it corrects the time and leaves
 the face alone - and the clock appears only when `Show time` is pressed in the
-app. `Start Breakout` still opens the game.
+app. `Start Breakout` still opens the game, and `Draw pad` turns the screen into
+a sheet of paper the phone draws on.
 
 For a button press to arrive, the keychain has to be reachable at the moment it
 is pressed, so it advertises whenever it is not playing, retrying every five
@@ -267,6 +268,7 @@ motion behavior, the BLE protocol and the Android app were developed.
 | Light Sleep | After another 30 seconds the OLED turns off; MPU-6050 remains the wake source |
 | `TIME` | Displays time, date, steps, and synchronization status |
 | `GAME` | Runs a tilt-controlled Breakout game locally on the ESP32-C3 |
+| `DRAW` | Mirrors what the phone's drawing pad is drawing |
 
 A triple shake opens a temporary 60-second BLE window. Outside this window the
 keychain does not advertise, reducing unnecessary radio use. Version 2 dropped
@@ -333,6 +335,7 @@ main state machine
 | `idle_animation` | Low-power idle animation |
 | `time_animation` | Clock, date, and step screen |
 | `breakout_game` | Game state, collision physics, and random levels |
+| `draw_pad` | The canvas the phone's drawing pad writes to |
 | `phone_sync` | On-demand BLE GATT service |
 | `android_time_sync` | Android companion application |
 
@@ -426,7 +429,8 @@ The APK is generated at:
 android_time_sync/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The app has three buttons: `Start auto sync`, `Show time` and `Start Breakout`.
+The app has four buttons: `Start auto sync`, `Show time`,
+`Start Breakout` and `Draw pad`.
 
 ### Auto Sync
 
@@ -450,6 +454,39 @@ device - it does not take the screen.
 
 With auto sync on, the request is queued and sent at the next BLE window, and the
 notification tracks it. Without auto sync the app connects once, immediately.
+
+### Draw Pad
+
+1. Tap `Draw pad`.
+2. Draw on the black rectangle. The stroke appears on the keychain as you move.
+3. `Clear` wipes both. `Done` closes the pad and hands the screen back.
+
+The preview is a 128x64 bitmap scaled up without smoothing, and it rasterizes
+lines with the same Bresenham walk and round nib the firmware uses, so it shows
+the pixels the OLED will actually light rather than a smooth phone-quality line
+that turns out chunky on arrival.
+
+What travels over BLE is the stroke, not the picture: one opcode byte and two
+bytes per point, batched every 40 ms into a single write. Sending the 1024-byte
+framebuffer instead would need chunking and reassembly for an image that is
+almost entirely blank. The connection stays open for as long as the pad does -
+reconnecting per stroke would cost a second each time - and the MTU is
+negotiated up to 247 bytes, which is the difference between 9 points per packet
+and 120.
+
+There is a way to test all of this without the phone:
+
+```powershell
+pip install bleak
+python tools/draw_test.py
+```
+
+It draws a wave and a box over the same protocol the app uses and prints the
+characteristics it found, which separates a firmware problem from an app one.
+
+The keychain leaves the pad when the app says so, when the phone disconnects, or
+after five minutes without a packet. Auto sync pauses while the pad is open,
+because the keychain accepts one connection at a time.
 
 ### Breakout
 

@@ -22,6 +22,15 @@ public class KeychainSyncService extends Service {
             "com.smartmotion.keychaintimesync.START_GAME";
     static final String ACTION_SHOW_TIME =
             "com.smartmotion.keychaintimesync.SHOW_TIME";
+    /*
+     * The keychain accepts one connection at a time. While the drawing pad
+     * holds it, background scanning would only fight over the radio, so the
+     * service steps aside without forgetting that auto sync is switched on.
+     */
+    static final String ACTION_PAUSE =
+            "com.smartmotion.keychaintimesync.PAUSE";
+    static final String ACTION_RESUME =
+            "com.smartmotion.keychaintimesync.RESUME";
 
     private static final String TAG = "KeychainSyncService";
     private static final String CHANNEL_ID = "keychain_sync";
@@ -42,6 +51,7 @@ public class KeychainSyncService extends Service {
      */
     private enum PendingRequest { NONE, START_GAME, SHOW_TIME }
 
+    private boolean paused;
     private PendingRequest pendingRequest = PendingRequest.NONE;
     private boolean requestAttemptActive;
     private long requestDeadlineMs;
@@ -49,7 +59,7 @@ public class KeychainSyncService extends Service {
     private final Runnable startNextScan = new Runnable() {
         @Override
         public void run() {
-            if (!autoSyncRunning) {
+            if (!autoSyncRunning || paused) {
                 return;
             }
 
@@ -90,7 +100,7 @@ public class KeychainSyncService extends Service {
                 Log.i(TAG, success ? "Auto sync finished" :
                         "Auto sync did not find/write time");
                 handler.post(() -> {
-                    if (!autoSyncRunning) {
+                    if (!autoSyncRunning || paused) {
                         return;
                     }
                     if (pendingRequest != PendingRequest.NONE) {
@@ -129,6 +139,25 @@ public class KeychainSyncService extends Service {
             SyncPreferences.setAutoSyncEnabled(this, false);
             stopAutoSync();
             return START_NOT_STICKY;
+        }
+
+        if (ACTION_PAUSE.equals(action)) {
+            paused = true;
+            handler.removeCallbacks(startNextScan);
+            if (bleSync != null) {
+                bleSync.cancel();
+            }
+            updateNotification("Paused while the drawing pad is open");
+            return START_STICKY;
+        }
+
+        if (ACTION_RESUME.equals(action)) {
+            paused = false;
+            if (autoSyncRunning) {
+                scheduleNextScan(RETRY_AFTER_MISS_MS);
+                updateNotification("Watching for KeychainSync");
+            }
+            return START_STICKY;
         }
 
         if (ACTION_SHOW_TIME.equals(action)) {
@@ -190,6 +219,7 @@ public class KeychainSyncService extends Service {
 
     private void cleanupAutoSync() {
         autoSyncRunning = false;
+        paused = false;
         pendingRequest = PendingRequest.NONE;
         requestAttemptActive = false;
         handler.removeCallbacks(startNextScan);
@@ -208,6 +238,7 @@ public class KeychainSyncService extends Service {
     }
 
     private void queueRequest(PendingRequest request, String notice) {
+        paused = false;
         pendingRequest = request;
         requestDeadlineMs =
                 SystemClock.elapsedRealtime() + GAME_REQUEST_WINDOW_MS;
