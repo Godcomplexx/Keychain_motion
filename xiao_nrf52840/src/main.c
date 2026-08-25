@@ -39,7 +39,8 @@
 #define BLE_ADVERTISING_RETRY_US 5000000
 #define MICROSECONDS_PER_SECOND 1000000.0f
 #define TIME_FRAME_INTERVAL_US 1000000
-#define TIME_STATE_DURATION_US 60000000
+/* How long the clock stays up once asked for. */
+#define TIME_STATE_DURATION_US 15000000
 #define SLEEP_STILLNESS_TIMEOUT_US 30000000
 #define MOTION_MOVEMENT_DELTA_THRESHOLD 80
 /*
@@ -530,7 +531,7 @@ int main(void)
     uint32_t frames_until_log = 0;
     int demo_direction = 1;
     float demo_tilt = -0.7f;
-    float last_tilt_x = 0.0f;
+    float last_tilt_side = 0.0f;
     int previous_tilt_zone = 0;
     int smoothed_tilt_x = 0;
     int smoothed_tilt_y = 0;
@@ -736,7 +737,7 @@ int main(void)
                 current_state = motion_state_handle_event(
                     &state_machine, MOTION_EVENT_GAME_REQUESTED, true, now_us);
                 breakout_game_start(&game, now_us, sys_rand32_get(),
-                                    last_tilt_x);
+                                    last_tilt_side);
                 ESP_LOGW(TAG, "Breakout started from phone command");
             } else if (command == PHONE_SYNC_COMMAND_SHOW_TIME) {
                 /*
@@ -911,15 +912,19 @@ int main(void)
             tilt_x = mpu6050_accel_to_g(raw_data.x);
             tilt_y = mpu6050_accel_to_g(raw_data.y);
         } else {
-            /* A triangle wave keeps FLUID and GAME visibly testable. */
+            /*
+             * A triangle wave keeps FLUID and GAME visibly testable. It has to
+             * swing Y: that is the left-right axis, which is what the paddle
+             * and the gaze both follow. Sweeping X moved the one axis nothing
+             * reads, so the demo looked frozen.
+             */
             demo_tilt += (float)demo_direction * 0.02f;
             if (demo_tilt >= 0.7f || demo_tilt <= -0.7f) {
                 demo_direction = -demo_direction;
             }
-            tilt_x = demo_tilt;
-            tilt_y = 0.35f;
+            tilt_x = 0.35f;
+            tilt_y = demo_tilt;
         }
-        last_tilt_x = tilt_x;
 
         /*
          * Map the accelerometer's axes onto how the keychain is actually held.
@@ -933,6 +938,14 @@ int main(void)
          */
         const float tilt_side = tilt_y;
         const float tilt_pitch = tilt_x;
+
+        /*
+         * The paddle follows the same axis as everything else that means
+         * "left and right". It used to be handed tilt_x, so the only way to
+         * move the paddle sideways was to tip the keychain towards or away
+         * from you, which is why the game was unplayable.
+         */
+        last_tilt_side = tilt_side;
 
         /*
          * Smooth the live tilt the face follows. Raw samples jitter by a few
@@ -1255,7 +1268,7 @@ int main(void)
         case MOTION_STATE_GAME: {
             bool game_finished = false;
             render_err = breakout_game_update_and_render(
-                &game, tilt_x, frame_seconds, now_us, &game_finished);
+                &game, tilt_side, frame_seconds, now_us, &game_finished);
             log_render_error("GAME", render_err);
             if (game_finished) {
                 current_state = motion_state_handle_event(

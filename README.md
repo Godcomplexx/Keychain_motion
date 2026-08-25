@@ -449,7 +449,7 @@ device - it does not take the screen.
 
 1. Tap `Show time`.
 2. The phone sends `TIME:SHOW`.
-3. The keychain switches to the clock screen for 60 seconds; the radio stays up,
+3. The keychain switches to the clock screen for 15 seconds; the radio stays up,
    because the next button press has to have somewhere to arrive.
 
 With auto sync on, the request is queued and sent at the next BLE window, and the

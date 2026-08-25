@@ -52,7 +52,8 @@
  * by about 4x. The progress bar still advances smoothly enough at 1 Hz.
  */
 #define TIME_FRAME_INTERVAL_US 1000000
-#define TIME_STATE_DURATION_US 60000000
+/* How long the clock stays up once asked for. */
+#define TIME_STATE_DURATION_US 15000000
 #define LOW_POWER_SENSOR_READ_INTERVAL_US 150000
 #define LOW_POWER_LOOP_DELAY_MS 50
 #define MOTION_MOVEMENT_DELTA_THRESHOLD 80
