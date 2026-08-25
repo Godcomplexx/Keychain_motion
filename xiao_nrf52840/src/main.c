@@ -748,12 +748,27 @@ int main(void)
         last_tilt_x = tilt_x;
 
         /*
+         * Map the accelerometer's axes onto how the keychain is actually held.
+         *
+         * Measured by holding the board tilted to the right: Y swung from -13
+         * to +196 counts while X moved by a third of that and in the opposite
+         * sense. So Y is the left-right axis with positive to the right, and X
+         * is the one that responds to tipping it towards or away from you.
+         * Which axis is which is a property of how the part sits on the board,
+         * so it can only come from a measurement like this one.
+         */
+        const float tilt_side = tilt_y;
+        const float tilt_pitch = tilt_x;
+
+        /*
          * Smooth the live tilt the face follows. Raw samples jitter by a few
          * counts, and at 40 frames per second that reads as trembling eyes
          * rather than as a steady gaze.
          */
-        smoothed_tilt_x = (smoothed_tilt_x * 3 + tilt_to_percent(tilt_x)) / 4;
-        smoothed_tilt_y = (smoothed_tilt_y * 3 + tilt_to_percent(tilt_y)) / 4;
+        smoothed_tilt_x =
+            (smoothed_tilt_x * 3 + tilt_to_percent(tilt_side)) / 4;
+        smoothed_tilt_y =
+            (smoothed_tilt_y * 3 + tilt_to_percent(tilt_pitch)) / 4;
 
         if (sensor_sample_valid) {
             const float tilt_z = mpu6050_accel_to_g(raw_data.z);
@@ -821,9 +836,9 @@ int main(void)
              * Rocking: count direction reversals of a gentle tilt. A shake
              * reverses too, but its amplitude is far outside this band.
              */
-            const float swing = (tilt_x < 0.0f) ? -tilt_x : tilt_x;
+            const float swing = (tilt_side < 0.0f) ? -tilt_side : tilt_side;
             if (swing >= ROCKING_MIN_TILT_G && swing <= ROCKING_MAX_TILT_G) {
-                const int direction = (tilt_x > 0.0f) ? 1 : -1;
+                const int direction = (tilt_side > 0.0f) ? 1 : -1;
                 if (rocking_direction != 0 && direction != rocking_direction) {
                     if (rocking_window_started_us == 0 ||
                         now_us - rocking_window_started_us > ROCKING_WINDOW_US) {
@@ -898,7 +913,7 @@ int main(void)
 
         /* Only a real sensor produces a tilt gesture; the demo wave must not. */
         if (sensor_sample_valid) {
-            const int zone = tilt_zone(tilt_x, previous_tilt_zone);
+            const int zone = tilt_zone(tilt_side, previous_tilt_zone);
             if (zone != previous_tilt_zone && zone != 0) {
                 pet_behavior_post(&pet,
                                   (zone < 0) ? PET_EVENT_TILT_LEFT
