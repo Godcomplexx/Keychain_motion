@@ -68,6 +68,36 @@ typedef struct {
 #define TILT_GAZE_RANGE_X 12
 #define TILT_GAZE_RANGE_Y 5
 
+/*
+ * The eased pose, and the spontaneous glances, are where the Pip engine's
+ * liveliness actually comes from - not from the lid shapes. Two things it does
+ * that this renderer did not: every gaze and size target is approached
+ * exponentially rather than jumped to, and the eyes dart somewhere and come
+ * back every few seconds even when nothing has happened.
+ *
+ * Originally created by Hamza Yeşilmen (HamzaYslmn).
+ * Source:  https://github.com/HamzaYslmn/
+ * Sponsor: https://github.com/sponsors/HamzaYslmn
+ */
+#define POSE_TAU_GAZE_MS 90.0f
+#define POSE_TAU_SIZE_MS 110.0f
+#define IDLE_GLANCE_MIN_MS 1500U
+#define IDLE_GLANCE_SPAN_MS 3500U
+#define IDLE_GLANCE_HOLD_MS 620U
+
+static float s_pose_gaze_x;
+static float s_pose_gaze_y;
+static float s_pose_eye_width;
+static float s_pose_eye_height;
+static uint32_t s_pose_last_ms;
+static bool s_pose_started;
+
+static uint32_t s_next_glance_ms;
+static uint32_t s_glance_started_ms;
+static int s_glance_x;
+static int s_glance_y;
+static bool s_glancing;
+
 static uint32_t s_random_state = 0x9E3779B9U;
 static uint32_t s_next_blink_ms;
 static uint32_t s_blink_started_ms;
@@ -119,6 +149,48 @@ static float ease_out(float t)
 static int lerp_int(int from, int to, float t)
 {
     return from + (int)((float)(to - from) * clamp01(t) + 0.5f);
+}
+
+/* Frame-rate independent exponential approach of current towards target. */
+static float ease_towards(float current, float target, float dt_ms, float tau_ms)
+{
+    return target + (current - target) * expf(-dt_ms / tau_ms);
+}
+
+/*
+ * A spontaneous glance: the eyes dart somewhere and come back, every few
+ * seconds, whether or not anything happened. This is the single strongest cue
+ * that something is alive rather than merely displayed.
+ */
+static void update_idle_glance(uint32_t now_ms, int *gaze_x, int *gaze_y)
+{
+    if (s_next_glance_ms == 0U) {
+        s_next_glance_ms = now_ms + IDLE_GLANCE_MIN_MS;
+    }
+
+    if (!s_glancing && time_reached(now_ms, s_next_glance_ms)) {
+        s_glancing = true;
+        s_glance_started_ms = now_ms;
+        /* Off to one side, a little up or down, never far. */
+        s_glance_x = (int)(random_next() % 19U) - 9;
+        s_glance_y = (int)(random_next() % 7U) - 3;
+    }
+
+    if (!s_glancing) {
+        return;
+    }
+
+    const uint32_t elapsed = now_ms - s_glance_started_ms;
+    if (elapsed >= IDLE_GLANCE_HOLD_MS) {
+        s_glancing = false;
+        s_next_glance_ms = now_ms + IDLE_GLANCE_MIN_MS +
+                           random_next() % (IDLE_GLANCE_SPAN_MS + 1U);
+        return;
+    }
+
+    /* Hold near the target for most of it; the ease does the travelling. */
+    *gaze_x += s_glance_x;
+    *gaze_y += s_glance_y;
 }
 
 static void fill_rect(int x, int y, int width, int height, bool on)
@@ -623,6 +695,15 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
         frame->gaze_x += (view->tilt_x * TILT_GAZE_RANGE_X) / 100;
         frame->gaze_y += (view->tilt_y * TILT_GAZE_RANGE_Y) / 100;
     }
+
+    /*
+     * The gauge rides on top of whatever the pet is doing, rather than the
+     * charger replacing it. Behaviours with something of their own to show -
+     * sparkles, a scan line - keep it.
+     */
+    if (view->charging && frame->overlay == OVERLAY_NONE) {
+        frame->overlay = OVERLAY_BATTERY;
+    }
 }
 
 static void draw_overlay(const face_frame_t *frame, const pet_view_t *view,
@@ -732,11 +813,53 @@ esp_err_t pet_face_render(const pet_view_t *view, uint32_t now_ms)
     face_frame_t frame;
     build_frame(view, now_ms, &frame);
 
+    /* Idle glances belong to the resting states; a reaction owns its own gaze. */
+    if (frame.track_tilt) {
+        update_idle_glance(now_ms, &frame.gaze_x, &frame.gaze_y);
+    }
+
+    /*
+     * Glide the gaze and the eye size towards their targets instead of jumping.
+     * Everything else - the trembles, the hops - is meant to be abrupt and is
+     * left alone.
+     */
+    if (!s_pose_started) {
+        s_pose_started = true;
+        s_pose_last_ms = now_ms;
+        s_pose_gaze_x = (float)frame.gaze_x;
+        s_pose_gaze_y = (float)frame.gaze_y;
+        s_pose_eye_width = (float)frame.eye_width;
+        s_pose_eye_height = (float)frame.eye_height;
+    }
+    float dt_ms = (float)(now_ms - s_pose_last_ms);
+    s_pose_last_ms = now_ms;
+    if (dt_ms < 1.0f) { dt_ms = 1.0f; }
+    if (dt_ms > 120.0f) { dt_ms = 120.0f; }
+
+    s_pose_gaze_x = ease_towards(s_pose_gaze_x, (float)frame.gaze_x,
+                                 dt_ms, POSE_TAU_GAZE_MS);
+    s_pose_gaze_y = ease_towards(s_pose_gaze_y, (float)frame.gaze_y,
+                                 dt_ms, POSE_TAU_GAZE_MS);
+    s_pose_eye_width = ease_towards(s_pose_eye_width, (float)frame.eye_width,
+                                    dt_ms, POSE_TAU_SIZE_MS);
+    s_pose_eye_height = ease_towards(s_pose_eye_height, (float)frame.eye_height,
+                                     dt_ms, POSE_TAU_SIZE_MS);
+
+    frame.gaze_x = (int)(s_pose_gaze_x + 0.5f);
+    frame.gaze_y = (int)(s_pose_gaze_y + 0.5f);
+    frame.eye_width = (int)(s_pose_eye_width + 0.5f);
+    frame.eye_height = (int)(s_pose_eye_height + 0.5f);
+
     const int openness = blink_openness(now_ms, frame.allow_blink, view->bond);
     int eye_height = (frame.eye_height * openness) / 100;
     if (eye_height < 2) {
         eye_height = 2;
     }
+
+    /* Parallax: the eye on the side being looked at swells, the far one thins.
+     * A pair of eyes moving in perfect lockstep reads as a graphic; this reads
+     * as a head turning. */
+    const int parallax = (frame.gaze_x * 3) / TILT_GAZE_RANGE_X;
 
     oled_display_clear();
 
@@ -753,22 +876,27 @@ esp_err_t pet_face_render(const pet_view_t *view, uint32_t now_ms)
                              (int)(offset_x * turn_cos + 0.5f) +
                              frame.group_dx + frame.gaze_x;
         const int eye_center_y = center_y + (int)(offset_x * turn_sin + 0.5f);
+        /* Near eye grows, far eye thins, by the same amount. */
+        const int near = (eye == 1) ? parallax : -parallax;
+        int eye_width = frame.eye_width + near;
+        if (eye_width < 6) { eye_width = 6; }
+
         if (frame.arc_eyes) {
-            draw_arc_eye(center_x, eye_center_y, frame.eye_width,
+            draw_arc_eye(center_x, eye_center_y, eye_width,
                          frame.eye_height, 4);
             continue;
         }
 
-        fill_round_rect(center_x, eye_center_y, frame.eye_width, eye_height,
+        fill_round_rect(center_x, eye_center_y, eye_width, eye_height,
                         frame.radius, true);
         /* Skip the lids mid-blink: they would just eat the whole closed eye. */
         if (openness > 50) {
             if (frame.glare_percent > 0) {
-                paint_glare(center_x, eye_center_y, frame.eye_width, eye_height,
+                paint_glare(center_x, eye_center_y, eye_width, eye_height,
                             frame.glare_percent, eye == 1);
             }
             if (frame.lid_top_percent > 0 || frame.lid_bottom_percent < 100) {
-                paint_lids(center_x, eye_center_y, frame.eye_width, eye_height,
+                paint_lids(center_x, eye_center_y, eye_width, eye_height,
                            frame.lid_top_percent, frame.lid_bottom_percent);
             }
         }

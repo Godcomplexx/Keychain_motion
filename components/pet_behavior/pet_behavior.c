@@ -337,9 +337,13 @@ static pet_behavior_id_t resolve_base(const pet_behavior_t *pet,
         context->battery_percent <= LOW_BATTERY_PERCENT) {
         return PET_SLEEPY;
     }
-    if (context->charging) {
-        return PET_CHARGING;
-    }
+    /*
+     * Charging is deliberately not a state of its own any more. It used to
+     * outrank boredom and sleep, so a keychain sitting on a cable showed one
+     * frozen screen and none of its own life - which is exactly the situation
+     * anyone watching it is in. It is a fact about the battery, so it belongs
+     * on the gauge, the way a phone keeps showing its interface while charging.
+     */
     /* A pet that is handled often takes longer to get bored. */
     if (idle_ms >= (uint32_t)BORED_AFTER_MS + (uint32_t)pet->bond * 200U) {
         return PET_BORED;
