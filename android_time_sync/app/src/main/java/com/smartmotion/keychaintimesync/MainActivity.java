@@ -28,10 +28,12 @@ public class MainActivity extends Activity {
     private TextView logText;
     private Button syncButton;
     private Button autoButton;
+    private Button timeButton;
     private Button gameButton;
     private KeychainBleSync bleSync;
     private boolean autoSyncEnabled;
-    private boolean manualGameRequest;
+    /* What to say when the current manual operation succeeds. */
+    private String manualSuccessStatus = "Synced";
     private boolean manualOperationRunning;
 
     @Override
@@ -49,14 +51,15 @@ public class MainActivity extends Activity {
             public void onFinished(boolean success) {
                 setBusy(false);
                 setStatus(success
-                        ? (manualGameRequest ? "Breakout started" : "Synced")
+                        ? manualSuccessStatus
                         : "Ready");
-                manualGameRequest = false;
+                manualSuccessStatus = "Synced";
             }
         });
 
         syncButton.setOnClickListener(view -> startManualSync());
         autoButton.setOnClickListener(view -> toggleAutoSync());
+        timeButton.setOnClickListener(view -> showTime());
         gameButton.setOnClickListener(view -> startBreakout());
         autoSyncEnabled = SyncPreferences.isAutoSyncEnabled(this);
         updateAutoSyncUi();
@@ -120,6 +123,13 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(52)));
 
+        timeButton = new Button(this);
+        timeButton.setText("Show time");
+        timeButton.setAllCaps(false);
+        root.addView(timeButton, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
         gameButton = new Button(this);
         gameButton.setText("Start Breakout");
         gameButton.setAllCaps(false);
@@ -158,9 +168,33 @@ public class MainActivity extends Activity {
         }
 
         setBusy(true);
-        manualGameRequest = false;
+        manualSuccessStatus = "Synced";
         setStatus("Scanning");
         bleSync.start();
+    }
+
+    private void showTime() {
+        if (!hasRequiredPermissions()) {
+            requestRequiredPermissions();
+            return;
+        }
+
+        setStatus("Waiting for keychain");
+        if (autoSyncEnabled) {
+            Intent intent = new Intent(this, KeychainSyncService.class);
+            intent.setAction(KeychainSyncService.ACTION_SHOW_TIME);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
+            log("Clock request queued for the next BLE window");
+            return;
+        }
+
+        setBusy(true);
+        manualSuccessStatus = "Clock shown";
+        bleSync.showTime();
     }
 
     private void startBreakout() {
@@ -183,7 +217,7 @@ public class MainActivity extends Activity {
         }
 
         setBusy(true);
-        manualGameRequest = true;
+        manualSuccessStatus = "Breakout started";
         bleSync.startGame();
     }
 
@@ -219,7 +253,7 @@ public class MainActivity extends Activity {
 
     private void updateAutoSyncUi() {
         if (autoButton == null || syncButton == null ||
-            gameButton == null) {
+            gameButton == null || timeButton == null) {
             return;
         }
         autoButton.setText(autoSyncEnabled
@@ -228,6 +262,7 @@ public class MainActivity extends Activity {
         syncButton.setEnabled(!autoSyncEnabled &&
                               !manualOperationRunning);
         autoButton.setEnabled(!manualOperationRunning);
+        timeButton.setEnabled(!manualOperationRunning);
         gameButton.setEnabled(!manualOperationRunning);
     }
 
@@ -280,6 +315,7 @@ public class MainActivity extends Activity {
         mainHandler.post(() -> {
             syncButton.setEnabled(!busy && !autoSyncEnabled);
             autoButton.setEnabled(!busy);
+            timeButton.setEnabled(!busy);
             gameButton.setEnabled(!busy);
         });
     }

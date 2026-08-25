@@ -97,7 +97,6 @@ esp_err_t time_animation_render(const time_animation_view_t *view,
 
     char time_text[9];
     char date_text[11];
-    char steps_text[18];
 
     snprintf(time_text, sizeof(time_text),
              "%02u:%02u:%02u",
@@ -109,9 +108,6 @@ esp_err_t time_animation_render(const time_animation_view_t *view,
              clamp_year(view->year),
              clamp_month(view->month),
              clamp_day(view->day));
-    snprintf(steps_text, sizeof(steps_text),
-             "STEPS %lu",
-             (unsigned long)view->steps_today);
 
     oled_display_clear();
 
@@ -125,7 +121,6 @@ esp_err_t time_animation_render(const time_animation_view_t *view,
     /* TIME state MVP: software clock plus approximate daily step count. */
     oled_display_draw_text(TIME_TEXT_X, TIME_TEXT_Y, time_text);
     oled_display_draw_text(DATE_TEXT_X, DATE_TEXT_Y, date_text);
-    oled_display_draw_text(STEPS_TEXT_X, STEPS_TEXT_Y, steps_text);
     draw_progress_bar(elapsed_us, duration_us);
 
     return oled_display_present();

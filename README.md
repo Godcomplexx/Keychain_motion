@@ -119,11 +119,13 @@ never twice in a row. Any interaction ends an activity in the same tick.
 tilting, which takes a person. A pet starting a two-player game on its own would
 be stranger than silence, so the scheduler never picks it.
 
-It is summoned by a gesture instead: **tip the keychain steeply and hold for a
-second and a half**, the way you tip a glass. The 0.8 g threshold is past
-anything ordinary handling produces. The game runs for 30 seconds, and tilting
-during it counts as the controller: it neither ends the game nor makes the pet
-glance sideways instead.
+It is summoned deliberately instead: from the phone, by pressing
+`Start Breakout`, or - when `PLAY_GESTURE_ENABLED` is switched back to 1 in
+[main.c](xiao_nrf52840/src/main.c) - by tipping the keychain steeply and holding
+for a second and a half, the way you tip a glass. The gesture is off by default
+so the face can be judged on its own: FLIP takes the whole display for 30
+seconds at a time. Tilting during the game counts as the controller: it neither
+ends the game nor makes the pet glance sideways instead.
 
 **It still depends on the accelerometer.** Without a sensor the gesture is
 impossible, and the particles fall back to a synthetic tilt sweep: they move,
@@ -140,8 +142,18 @@ is disabled - nothing could wake the face again, and a frozen screen reads as a
 crash - and self-directed activities are scheduled far more often so something
 is always happening. Soldering the sensor later needs no firmware change.
 
-Time synchronization with the Android app and the tilt-controlled Breakout are
-unchanged from version 1.
+**The phone starts things; the keychain no longer volunteers.** Version 1 showed
+the clock whenever it was shaken and counted steps all day. Version 2 does
+neither. Setting the clock over BLE is silent - it corrects the time and leaves
+the face alone - and the clock appears only when `Show time` is pressed in the
+app. `Start Breakout` still opens the game.
+
+For a button press to arrive, the keychain has to be reachable at the moment it
+is pressed, so it advertises whenever it is not playing, retrying every five
+seconds. The old rule - advertise for 60 seconds after a triple shake - meant
+every button press had to be preceded by shaking the keychain awake. Shaking
+still helps in one case: it brings the radio back immediately after a game
+instead of waiting out the retry interval.
 
 ## Hardware and Updates
 
@@ -257,7 +269,9 @@ motion behavior, the BLE protocol and the Android app were developed.
 | `GAME` | Runs a tilt-controlled Breakout game locally on the ESP32-C3 |
 
 A triple shake opens a temporary 60-second BLE window. Outside this window the
-keychain does not advertise, reducing unnecessary radio use.
+keychain does not advertise, reducing unnecessary radio use. Version 2 dropped
+this in favour of continuous slow advertising, so that a button press in the app
+always has somewhere to arrive.
 
 ## Hardware at a Glance
 
@@ -358,7 +372,8 @@ The firmware reduces average current without removing the interactive modes:
 - the OLED turns off after another 30 seconds;
 - MPU-6050 enters low-power motion detection;
 - `INT` wakes the ESP32-C3 when the keychain moves;
-- BLE starts only after a triple shake and shuts down after a command;
+- BLE starts only after a triple shake and shuts down after a command
+  (version 2 advertises slowly all the time instead);
 - Breakout runs with BLE disabled.
 
 For a six-hour target with a 350 mAh battery:
@@ -411,23 +426,37 @@ The APK is generated at:
 android_time_sync/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+The app has three buttons: `Start auto sync`, `Show time` and `Start Breakout`.
+
 ### Auto Sync
 
 1. Grant Bluetooth and notification permissions.
 2. Tap `Start auto sync`.
-3. Perform a triple shake.
-4. The app discovers `KeychainSync`, sends local phone time, and disconnects.
+3. The app discovers `KeychainSync`, sends local phone time, and disconnects.
+
+On version 2 the keychain advertises continuously, so this needs no gesture. On
+version 1 a triple shake is still required to open the radio window.
 
 Background synchronization uses Android's low-power BLE scan mode. Explicit
-manual commands use the faster balanced mode.
+manual commands use the faster balanced mode. Setting the clock is silent on the
+device - it does not take the screen.
+
+### Show the Clock
+
+1. Tap `Show time`.
+2. The phone sends `TIME:SHOW`.
+3. The keychain switches to the clock screen for 60 seconds; the radio stays up,
+   because the next button press has to have somewhere to arrive.
+
+With auto sync on, the request is queued and sent at the next BLE window, and the
+notification tracks it. Without auto sync the app connects once, immediately.
 
 ### Breakout
 
 1. Tap `Start Breakout`.
-2. Perform a triple shake.
-3. The phone sends `GAME:START`.
-4. BLE powers down and gameplay continues locally.
-5. Tilt the keychain left and right to move the paddle.
+2. The phone sends `GAME:START`.
+3. BLE powers down and gameplay continues locally.
+4. Tilt the keychain left and right to move the paddle.
 
 Breakout has three lives, generated levels, increasing speed, and no fixed
 active-play time limit. It exits after five minutes without paddle input.

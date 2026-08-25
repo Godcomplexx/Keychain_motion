@@ -27,7 +27,6 @@
 #include "pet_behavior.h"
 #include "pet_face.h"
 #include "phone_sync.h"
-#include "step_counter.h"
 #include "time_animation.h"
 #include "usb_dfu_touch.h"
 
@@ -36,7 +35,7 @@
 #define LOW_POWER_LOOP_DELAY_MS 50
 #define STARTUP_SCREEN_DELAY_MS 1000
 #define HARDWARE_RETRY_INTERVAL_US 5000000
-#define SENSORLESS_BLE_RETRY_US 5000000
+#define BLE_ADVERTISING_RETRY_US 5000000
 #define MICROSECONDS_PER_SECOND 1000000.0f
 #define TIME_FRAME_INTERVAL_US 1000000
 #define TIME_STATE_DURATION_US 60000000
@@ -52,14 +51,22 @@
 #define MOTION_SHAKE_DELTA_THRESHOLD 250
 #define MOTION_SHAKE_COUNT_REQUIRED 3
 #define MOTION_SHAKE_WINDOW_US 2500000
-#define PHONE_SYNC_WINDOW_US 60000000
 #define PHONE_SYNC_SHUTDOWN_GRACE_MS 200
 #define OLED_ACTIVE_CONTRAST 0x9F
 #define OLED_GAME_CONTRAST 0x8F
 #define OLED_IDLE_CONTRAST 0x18
 #define RAW_LOG_INTERVAL_FRAMES 200
-/* The companion face is redrawn slowly in SLEEP to keep the average current low. */
-#define PET_SLEEP_FRAME_INTERVAL_US 200000
+/*
+ * How often the resting screen is redrawn.
+ *
+ * This used to be a flat 200 ms, chosen when the resting screen was a dim idle
+ * animation. It is now the companion's face, and five frames a second destroys
+ * everything that makes it look alive: an eased gaze settles between frames, a
+ * glance lasting 600 ms is three of them. Only a pet that is actually asleep
+ * gets the slow rate now - there is nothing to see there anyway.
+ */
+#define PET_AWAKE_FRAME_INTERVAL_US 40000
+#define PET_ASLEEP_FRAME_INTERVAL_US 200000
 /* A cell voltage moves slowly; sampling it often would only waste current. */
 #define BATTERY_SAMPLE_INTERVAL_US 10000000
 /* Tilt gestures need hysteresis, otherwise every frame near the edge fires. */
@@ -123,7 +130,7 @@
  * nobody holds one inverted and perfectly still for that long, so the reaction
  * survives while a reference learned at a bad moment heals itself.
  */
-#define UPRIGHT_RELEARN_STILL_US 60000000
+#define UPRIGHT_RELEARN_STILL_US 25000000
 
 /*
  * Rocking is slow, gentle and repetitive: several direction changes inside a
@@ -384,7 +391,10 @@ static esp_err_t render_pet_sleep_frame_if_due(int64_t now_us,
         return flip_animation_render(tilt_x, tilt_y, frame_seconds);
     }
 
-    if (now_us - *previous_frame_us < PET_SLEEP_FRAME_INTERVAL_US) {
+    /* The pet's own state decides the rate, not the legacy screen mode. */
+    const int64_t interval = (view->id == PET_ASLEEP)
+        ? PET_ASLEEP_FRAME_INTERVAL_US : PET_AWAKE_FRAME_INTERVAL_US;
+    if (now_us - *previous_frame_us < interval) {
         return ESP_OK;
     }
     const esp_err_t err = pet_face_render(view, (uint32_t)(now_us / 1000));
@@ -397,8 +407,7 @@ static esp_err_t render_pet_sleep_frame_if_due(int64_t now_us,
 static esp_err_t render_time_frame_if_due(int64_t now_us,
                                           int64_t entered_at_us,
                                           int64_t *previous_frame_us,
-                                          const device_clock_t *clock,
-                                          const step_counter_t *steps)
+                                          const device_clock_t *clock)
 {
     if (!oled_display_is_available() ||
         now_us - *previous_frame_us < TIME_FRAME_INTERVAL_US) {
@@ -414,7 +423,6 @@ static esp_err_t render_time_frame_if_due(int64_t now_us,
         .hour = datetime.hour,
         .minute = datetime.minute,
         .second = datetime.second,
-        .steps_today = step_counter_get_steps_today(steps),
         .clock_synced = device_clock_has_phone_sync(clock),
     };
     const esp_err_t err = time_animation_render(
@@ -508,8 +516,7 @@ int main(void)
     int64_t previous_time_frame_us = 0;
     int64_t last_sensor_probe_us = now_us - HARDWARE_RETRY_INTERVAL_US;
     int64_t last_display_probe_us = now_us - HARDWARE_RETRY_INTERVAL_US;
-    int64_t last_sensorless_ble_request_us =
-        now_us - SENSORLESS_BLE_RETRY_US;
+    int64_t last_ble_request_us = now_us - BLE_ADVERTISING_RETRY_US;
     uint32_t frames_until_log = 0;
     int demo_direction = 1;
     float demo_tilt = -0.7f;
@@ -538,7 +545,7 @@ int main(void)
     float debug_min_side = 9.0f;
     float debug_max_side = -9.0f;
     bool previous_charger_attached = false;
-    bool sensorless_ble_announced = false;
+    bool ble_advertising_announced = false;
     int64_t last_battery_sample_us = 0;
     uint8_t battery_percent = BATTERY_PERCENT_UNKNOWN;
     uint8_t last_logged_percent = BATTERY_PERCENT_UNKNOWN;
@@ -549,8 +556,6 @@ int main(void)
     device_clock_init(&clock, now_us);
     device_clock_datetime_t datetime;
     device_clock_get_datetime(&clock, now_us, &datetime);
-    step_counter_t steps;
-    step_counter_init(&steps, device_clock_date_key(&datetime));
     motion_detector_t detector;
     motion_detector_init(&detector, now_us,
                          MOTION_MOVEMENT_DELTA_THRESHOLD,
@@ -594,8 +599,6 @@ int main(void)
     if (!phone_sync_available) {
         ESP_LOGW(TAG, "Phone synchronization is unavailable");
     }
-    bool phone_sync_window_active = false;
-    int64_t phone_sync_window_deadline_us = 0;
 
 #if defined(CONFIG_BOOTLOADER_MCUBOOT)
     /*
@@ -667,7 +670,7 @@ int main(void)
             last_sensor_probe_us = now_us;
             if (mpu6050_init() == ESP_OK) {
                 ESP_LOGI(TAG, "Accelerometer connected after boot");
-                sensorless_ble_announced = false;
+                ble_advertising_announced = false;
                 previous_tilt_zone = 0;
                 motion_detector_init(&detector, now_us,
                                      MOTION_MOVEMENT_DELTA_THRESHOLD,
@@ -679,29 +682,27 @@ int main(void)
             }
         }
 
-        /* With no accelerometer there is no triple-shake gesture. */
-        if (phone_sync_available && !mpu6050_is_available() &&
-            now_us - last_sensorless_ble_request_us >=
-                SENSORLESS_BLE_RETRY_US) {
-            last_sensorless_ble_request_us = now_us;
+        /*
+         * The phone is the one that starts things now: a button press shows the
+         * clock or opens the game. That only works if the keychain can be
+         * reached at the moment the button is pressed, so it advertises
+         * whenever it is not playing - slowly, to keep the radio cheap. The
+         * shake gesture used to be the only way in, which meant every button
+         * press had to be preceded by shaking the keychain awake.
+         */
+        if (phone_sync_available && current_state != MOTION_STATE_GAME &&
+            now_us - last_ble_request_us >= BLE_ADVERTISING_RETRY_US) {
+            last_ble_request_us = now_us;
             if (phone_sync_request_advertising() == ESP_OK &&
-                !sensorless_ble_announced) {
+                !ble_advertising_announced) {
                 /*
                  * Advertising is retried every few seconds here, so the pet is
                  * told only once: otherwise it would restart the looking-for-
                  * the-phone animation forever and never show anything else.
                  */
-                sensorless_ble_announced = true;
+                ble_advertising_announced = true;
                 pet_behavior_post(&pet, PET_EVENT_PHONE_WINDOW_OPEN, now_ms);
             }
-        }
-
-        if (phone_sync_window_active &&
-            now_us >= phone_sync_window_deadline_us) {
-            phone_sync_stop_advertising();
-            phone_sync_window_active = false;
-            pet_behavior_post(&pet, PET_EVENT_PHONE_WINDOW_CLOSED, now_ms);
-            ESP_LOGI(TAG, "Phone sync window expired");
         }
 
         if (phone_sync_available && phone_sync_take_connected_event()) {
@@ -709,43 +710,31 @@ int main(void)
         }
 
         phone_sync_command_t command;
-        if (phone_sync_available && phone_sync_get_command(&command) &&
-            command == PHONE_SYNC_COMMAND_START_GAME) {
-            phone_sync_window_active = false;
-            phone_sync_stop_advertising();
-            k_sleep(K_MSEC(PHONE_SYNC_SHUTDOWN_GRACE_MS));
-            (void)phone_sync_shutdown();
-
+        if (phone_sync_available && phone_sync_get_command(&command)) {
             const motion_state_t previous_state = current_state;
-            current_state = motion_state_handle_event(
-                &state_machine, MOTION_EVENT_GAME_REQUESTED, true, now_us);
-            breakout_game_start(&game, now_us, sys_rand32_get(), last_tilt_x);
-            if (current_state != previous_state) {
-                apply_state_entry_actions(current_state, now_us,
-                                          &previous_frame_us,
-                                          &previous_sleep_frame_us,
-                                          &previous_time_frame_us);
-            }
-            ESP_LOGW(TAG, "Breakout started from phone command");
-        }
 
-        device_clock_datetime_t phone_datetime;
-        if (phone_sync_available &&
-            phone_sync_get_datetime_update(&phone_datetime)) {
-            device_clock_set_datetime(&clock, &phone_datetime, now_us);
-            if (step_counter_get_date_key(&steps) !=
-                device_clock_date_key(&phone_datetime)) {
-                step_counter_init(&steps,
-                                  device_clock_date_key(&phone_datetime));
-            }
-            phone_sync_window_active = false;
-            phone_sync_stop_advertising();
-            k_sleep(K_MSEC(PHONE_SYNC_SHUTDOWN_GRACE_MS));
-            (void)phone_sync_shutdown();
+            if (command == PHONE_SYNC_COMMAND_START_GAME) {
+                /* The game wants the radio off; nothing else will be sent. */
+                ble_advertising_announced = false;
+                phone_sync_stop_advertising();
+                k_sleep(K_MSEC(PHONE_SYNC_SHUTDOWN_GRACE_MS));
+                (void)phone_sync_shutdown();
 
-            const motion_state_t previous_state = current_state;
-            current_state = motion_state_handle_event(
-                &state_machine, MOTION_EVENT_TIME_REQUESTED, true, now_us);
+                current_state = motion_state_handle_event(
+                    &state_machine, MOTION_EVENT_GAME_REQUESTED, true, now_us);
+                breakout_game_start(&game, now_us, sys_rand32_get(),
+                                    last_tilt_x);
+                ESP_LOGW(TAG, "Breakout started from phone command");
+            } else if (command == PHONE_SYNC_COMMAND_SHOW_TIME) {
+                /*
+                 * Asked for by hand. The radio stays up: the person is holding
+                 * the phone and may well press something else next.
+                 */
+                current_state = motion_state_handle_event(
+                    &state_machine, MOTION_EVENT_TIME_REQUESTED, true, now_us);
+                ESP_LOGW(TAG, "Clock shown on request");
+            }
+
             if (current_state != previous_state) {
                 apply_state_entry_actions(current_state, now_us,
                                           &previous_frame_us,
@@ -754,6 +743,19 @@ int main(void)
             } else if (current_state == MOTION_STATE_TIME) {
                 previous_time_frame_us = 0;
             }
+        }
+
+        device_clock_datetime_t phone_datetime;
+        if (phone_sync_available &&
+            phone_sync_get_datetime_update(&phone_datetime)) {
+            /*
+             * Setting the clock no longer takes the screen. A background sync
+             * should correct the time and leave the companion alone; the clock
+             * appears when someone asks for it, which is TIME:SHOW. The radio
+             * also stays up, because the phone is connected and the next
+             * button press has to have somewhere to arrive.
+             */
+            device_clock_set_datetime(&clock, &phone_datetime, now_us);
             pet_behavior_post(&pet, PET_EVENT_PHONE_SYNCED, now_ms);
             ESP_LOGW(TAG, "Clock synchronized from phone");
         }
@@ -781,8 +783,6 @@ int main(void)
             if (mpu6050_read_accel(&raw_data) == ESP_OK) {
                 sensor_sample_valid = true;
                 device_clock_get_datetime(&clock, now_us, &datetime);
-                step_counter_update(&steps, &raw_data,
-                                    device_clock_date_key(&datetime), now_us);
                 detector_result = motion_detector_update(
                     &detector, &raw_data, now_us);
                 event = detector_result_to_event(&detector_result);
@@ -818,12 +818,14 @@ int main(void)
                                           &previous_sleep_frame_us,
                                           &previous_time_frame_us);
             }
-            if (!phone_sync_window_active && phone_sync_available &&
+            /*
+             * Shaking no longer has to open a radio window - advertising is
+             * already up - but it does bring it back immediately after a game,
+             * without waiting out the retry interval.
+             */
+            if (phone_sync_available &&
                 phone_sync_request_advertising() == ESP_OK) {
-                phone_sync_window_active = true;
-                phone_sync_window_deadline_us = now_us + PHONE_SYNC_WINDOW_US;
-                pet_behavior_post(&pet, PET_EVENT_PHONE_WINDOW_OPEN, now_ms);
-                ESP_LOGW(TAG, "Triple shake: BLE window open for 60 seconds");
+                last_ble_request_us = now_us;
             }
         } else if (sensor_sample_valid && event != MOTION_EVENT_NONE) {
             /*
@@ -908,16 +910,15 @@ int main(void)
                 free_fall_started_us = 0;
             }
 
-            /* Learn which way up it started; that becomes "upright". */
-            if (upright_z_sign == 0 &&
-                (tilt_z >= UPRIGHT_REFERENCE_MIN_G ||
-                 tilt_z <= -UPRIGHT_REFERENCE_MIN_G)) {
-                upright_z_sign = (tilt_z > 0.0f) ? 1 : -1;
-                ESP_LOGI(TAG, "Upright reference learned: Z = %.2f g",
-                         (double)tilt_z);
-            }
-
-            /* A long undisturbed rest redefines which way up is normal. */
+            /*
+             * No reference is learned at startup any more. The board reboots
+             * on every firmware update, usually in someone's hand, and a
+             * reference caught there is wrong - which is how the pet ended up
+             * insisting it was upside down while lying on a desk. Until a
+             * still rest establishes one, the state simply does not fire.
+             *
+             * A long undisturbed rest is the reference.
+             */
             if (detector_result.stillness_us >= UPRIGHT_RELEARN_STILL_US &&
                 (tilt_z >= UPRIGHT_REFERENCE_MIN_G ||
                  tilt_z <= -UPRIGHT_REFERENCE_MIN_G)) {
@@ -1147,10 +1148,9 @@ int main(void)
         }
 
         if (sensor_sample_valid && frames_until_log == 0) {
-            ESP_LOGI(TAG, "State=%s event=%s steps=%lu raw=%d,%d,%d",
+            ESP_LOGI(TAG, "State=%s event=%s raw=%d,%d,%d",
                      motion_state_name(current_state),
                      motion_event_name(event),
-                     (unsigned long)step_counter_get_steps_today(&steps),
                      raw_data.x, raw_data.y, raw_data.z);
             frames_until_log = RAW_LOG_INTERVAL_FRAMES;
         }
@@ -1181,7 +1181,7 @@ int main(void)
         case MOTION_STATE_TIME:
             render_err = render_time_frame_if_due(
                 now_us, motion_state_entered_at_us(&state_machine),
-                &previous_time_frame_us, &clock, &steps);
+                &previous_time_frame_us, &clock);
             log_render_error("TIME", render_err);
             k_sleep(K_MSEC(LOW_POWER_LOOP_DELAY_MS));
             break;

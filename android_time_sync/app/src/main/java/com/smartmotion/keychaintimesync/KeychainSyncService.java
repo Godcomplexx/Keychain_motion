@@ -20,6 +20,8 @@ public class KeychainSyncService extends Service {
             "com.smartmotion.keychaintimesync.STOP";
     static final String ACTION_START_GAME =
             "com.smartmotion.keychaintimesync.START_GAME";
+    static final String ACTION_SHOW_TIME =
+            "com.smartmotion.keychaintimesync.SHOW_TIME";
 
     private static final String TAG = "KeychainSyncService";
     private static final String CHANNEL_ID = "keychain_sync";
@@ -32,9 +34,17 @@ public class KeychainSyncService extends Service {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private KeychainBleSync bleSync;
     private boolean autoSyncRunning;
-    private boolean pendingGameRequest;
-    private boolean gameAttemptActive;
-    private long gameRequestDeadlineMs;
+    /*
+     * A request the person made in the app, waiting for the keychain's next
+     * BLE window. One field rather than a flag per command: they are mutually
+     * exclusive, and a second flag would only make it possible for two to be
+     * pending at once.
+     */
+    private enum PendingRequest { NONE, START_GAME, SHOW_TIME }
+
+    private PendingRequest pendingRequest = PendingRequest.NONE;
+    private boolean requestAttemptActive;
+    private long requestDeadlineMs;
 
     private final Runnable startNextScan = new Runnable() {
         @Override
@@ -44,14 +54,17 @@ public class KeychainSyncService extends Service {
             }
 
             if (bleSync != null && !bleSync.isRunning()) {
-                if (pendingGameRequest &&
-                    SystemClock.elapsedRealtime() <
-                            gameRequestDeadlineMs) {
-                    gameAttemptActive = true;
-                    bleSync.startGame();
+                if (pendingRequest != PendingRequest.NONE &&
+                    SystemClock.elapsedRealtime() < requestDeadlineMs) {
+                    requestAttemptActive = true;
+                    if (pendingRequest == PendingRequest.START_GAME) {
+                        bleSync.startGame();
+                    } else {
+                        bleSync.showTime();
+                    }
                 } else {
-                    pendingGameRequest = false;
-                    gameAttemptActive = false;
+                    pendingRequest = PendingRequest.NONE;
+                    requestAttemptActive = false;
                     bleSync.startBackgroundSync();
                 }
             }
@@ -71,27 +84,29 @@ public class KeychainSyncService extends Service {
 
             @Override
             public void onFinished(boolean success) {
-                boolean completedGameAttempt = gameAttemptActive;
-                gameAttemptActive = false;
+                boolean completedRequest = requestAttemptActive;
+                PendingRequest attempted = pendingRequest;
+                requestAttemptActive = false;
                 Log.i(TAG, success ? "Auto sync finished" :
                         "Auto sync did not find/write time");
                 handler.post(() -> {
                     if (!autoSyncRunning) {
                         return;
                     }
-                    if (pendingGameRequest) {
-                        if (completedGameAttempt && success) {
-                            pendingGameRequest = false;
-                            updateNotification("Breakout started");
+                    if (pendingRequest != PendingRequest.NONE) {
+                        String what = attempted == PendingRequest.SHOW_TIME
+                                ? "clock" : "Breakout";
+                        if (completedRequest && success) {
+                            pendingRequest = PendingRequest.NONE;
+                            updateNotification(what + " sent");
                             scheduleNextScan(RETRY_AFTER_SUCCESS_MS);
                         } else if (SystemClock.elapsedRealtime() >=
-                                   gameRequestDeadlineMs) {
-                            pendingGameRequest = false;
-                            updateNotification("Breakout request expired");
+                                   requestDeadlineMs) {
+                            pendingRequest = PendingRequest.NONE;
+                            updateNotification(what + " request expired");
                             scheduleNextScan(RETRY_AFTER_MISS_MS);
                         } else {
-                            updateNotification(
-                                    "Waiting to start Breakout");
+                            updateNotification("Waiting to send " + what);
                             scheduleNextScan(GAME_RETRY_MS);
                         }
                         return;
@@ -114,6 +129,16 @@ public class KeychainSyncService extends Service {
             SyncPreferences.setAutoSyncEnabled(this, false);
             stopAutoSync();
             return START_NOT_STICKY;
+        }
+
+        if (ACTION_SHOW_TIME.equals(action)) {
+            if (!SyncPreferences.isAutoSyncEnabled(this)) {
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            startAutoSync();
+            queueShowTimeRequest();
+            return START_STICKY;
         }
 
         if (ACTION_START_GAME.equals(action)) {
@@ -165,8 +190,8 @@ public class KeychainSyncService extends Service {
 
     private void cleanupAutoSync() {
         autoSyncRunning = false;
-        pendingGameRequest = false;
-        gameAttemptActive = false;
+        pendingRequest = PendingRequest.NONE;
+        requestAttemptActive = false;
         handler.removeCallbacks(startNextScan);
         if (bleSync != null) {
             bleSync.cancel();
@@ -174,12 +199,20 @@ public class KeychainSyncService extends Service {
         stopForeground(STOP_FOREGROUND_REMOVE);
     }
 
+    private void queueShowTimeRequest() {
+        queueRequest(PendingRequest.SHOW_TIME, "Waiting to send clock");
+    }
+
     private void queueGameRequest() {
-        pendingGameRequest = true;
-        gameRequestDeadlineMs =
+        queueRequest(PendingRequest.START_GAME, "Waiting to start Breakout");
+    }
+
+    private void queueRequest(PendingRequest request, String notice) {
+        pendingRequest = request;
+        requestDeadlineMs =
                 SystemClock.elapsedRealtime() + GAME_REQUEST_WINDOW_MS;
         handler.removeCallbacks(startNextScan);
-        updateNotification("Waiting to start Breakout");
+        updateNotification(notice);
         if (bleSync != null && bleSync.isRunning()) {
             bleSync.cancel();
         } else {

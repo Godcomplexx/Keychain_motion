@@ -9,6 +9,13 @@
 typedef enum {
     PHONE_SYNC_COMMAND_NONE = 0,
     PHONE_SYNC_COMMAND_START_GAME,
+    /*
+     * Setting the clock and putting the clock on screen are separate things.
+     * A background sync should correct the time without taking the display
+     * away from whatever the companion was doing; showing it is a request the
+     * person makes, so it has a command of its own.
+     */
+    PHONE_SYNC_COMMAND_SHOW_TIME,
 } phone_sync_command_t;
 
 esp_err_t phone_sync_init(void);

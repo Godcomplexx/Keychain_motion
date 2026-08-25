@@ -13,7 +13,6 @@ typedef struct {
     uint8_t hour;
     uint8_t minute;
     uint8_t second;
-    uint32_t steps_today;
     bool clock_synced;
 } time_animation_view_t;
 

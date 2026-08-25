@@ -286,7 +286,7 @@ static int time_access(uint16_t conn_handle,
              ctxt->op, (unsigned int)attr_handle);
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-        const char help[] = "time or GAME:START";
+        const char help[] = "time, TIME:SHOW or GAME:START";
         ESP_LOGI(TAG, "Phone read time characteristic");
         const int rc = os_mbuf_append(ctxt->om,
                                       help,
@@ -310,7 +310,15 @@ static int time_access(uint16_t conn_handle,
                  (unsigned int)length,
                  text);
 
-        if (strcmp(text, "GAME:START") == 0) {
+        if (strcmp(text, "TIME:SHOW") == 0) {
+            portENTER_CRITICAL(&s_datetime_lock);
+            s_pending_command = PHONE_SYNC_COMMAND_SHOW_TIME;
+            portEXIT_CRITICAL(&s_datetime_lock);
+            ESP_LOGW(TAG, "Show time command received");
+            return 0;
+        }
+
+    if (strcmp(text, "GAME:START") == 0) {
             portENTER_CRITICAL(&s_datetime_lock);
             s_pending_command = PHONE_SYNC_COMMAND_START_GAME;
             portEXIT_CRITICAL(&s_datetime_lock);

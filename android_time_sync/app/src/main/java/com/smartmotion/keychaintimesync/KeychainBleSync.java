@@ -29,7 +29,10 @@ import java.util.UUID;
 
 final class KeychainBleSync {
     private enum Operation {
+        /* Corrects the clock without touching the display. */
         TIME_SYNC,
+        /* Asks the keychain to put the clock on screen. */
+        SHOW_TIME,
         START_GAME
     }
 
@@ -172,6 +175,11 @@ final class KeychainBleSync {
     }
 
     @SuppressLint("MissingPermission")
+    void showTime() {
+        startOperation(Operation.SHOW_TIME, false);
+    }
+
+    @SuppressLint("MissingPermission")
     void startGame() {
         startOperation(Operation.START_GAME, false);
     }
@@ -231,14 +239,14 @@ final class KeychainBleSync {
                           scanCallback);
         long scanTimeoutMs = lowPowerScan
                 ? BACKGROUND_SCAN_TIMEOUT_MS
-                : (operation == Operation.START_GAME
-                        ? GAME_SCAN_TIMEOUT_MS
-                        : TIME_SCAN_TIMEOUT_MS);
+                : (operation == Operation.TIME_SYNC
+                        ? TIME_SCAN_TIMEOUT_MS
+                        : GAME_SCAN_TIMEOUT_MS);
         long operationTimeoutMs = lowPowerScan
                 ? BACKGROUND_OPERATION_TIMEOUT_MS
-                : (operation == Operation.START_GAME
-                        ? GAME_OPERATION_TIMEOUT_MS
-                        : TIME_OPERATION_TIMEOUT_MS);
+                : (operation == Operation.TIME_SYNC
+                        ? TIME_OPERATION_TIMEOUT_MS
+                        : GAME_OPERATION_TIMEOUT_MS);
         mainHandler.postDelayed(() -> {
             if (attemptId == currentAttemptId &&
                 scanning && !finished) {
@@ -329,6 +337,9 @@ final class KeychainBleSync {
         if (operation == Operation.START_GAME) {
             text = "GAME:START";
             log("Writing Breakout start command");
+        } else if (operation == Operation.SHOW_TIME) {
+            text = "TIME:SHOW";
+            log("Asking the keychain to show the clock");
         } else {
             ZonedDateTime phoneTime = ZonedDateTime.now();
             LocalDateTime localPhoneTime = phoneTime.toLocalDateTime();

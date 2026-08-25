@@ -24,7 +24,6 @@
 #include "mpu6050.h"
 #include "oled_display.h"
 #include "phone_sync.h"
-#include "step_counter.h"
 #include "time_animation.h"
 
 /*
@@ -182,8 +181,7 @@ static esp_err_t render_sleep_frame_if_due(int64_t now_us,
 static esp_err_t render_time_frame_if_due(int64_t now_us,
                                           int64_t entered_at_us,
                                           int64_t *previous_time_frame_us,
-                                          const device_clock_t *device_clock,
-                                          const step_counter_t *step_counter)
+                                          const device_clock_t *device_clock)
 {
     if (now_us - *previous_time_frame_us < TIME_FRAME_INTERVAL_US) {
         return ESP_OK;
@@ -199,7 +197,6 @@ static esp_err_t render_time_frame_if_due(int64_t now_us,
         .hour = datetime.hour,
         .minute = datetime.minute,
         .second = datetime.second,
-        .steps_today = step_counter_get_steps_today(step_counter),
         .clock_synced = device_clock_has_phone_sync(device_clock),
     };
 
@@ -392,7 +389,6 @@ void app_main(void)
     device_clock_t device_clock;
     motion_detector_t motion_detector;
     motion_state_machine_t motion_state;
-    step_counter_t step_counter;
     breakout_game_t breakout_game;
     uint8_t display_render_failure_count = 0;
     float last_tilt_x = 0.0f;
@@ -400,7 +396,6 @@ void app_main(void)
     device_clock_init(&device_clock, previous_frame_us);
     device_clock_datetime_t datetime;
     device_clock_get_datetime(&device_clock, previous_frame_us, &datetime);
-    step_counter_init(&step_counter, device_clock_date_key(&datetime));
 
     err = phone_sync_init();
     const bool phone_sync_available = err == ESP_OK;
@@ -442,17 +437,19 @@ void app_main(void)
         phone_sync_command_t phone_command;
         if (phone_sync_available &&
             phone_sync_get_command(&phone_command)) {
-            phone_sync_window_active = false;
-            phone_sync_stop_advertising();
-            vTaskDelay(pdMS_TO_TICKS(PHONE_SYNC_SHUTDOWN_GRACE_MS));
-            const esp_err_t shutdown_err = phone_sync_shutdown();
-            if (shutdown_err != ESP_OK) {
-                ESP_LOGW(TAG, "BLE shutdown after command failed: %s",
-                         esp_err_to_name(shutdown_err));
-            }
+            const motion_state_t previous_state = current_state;
 
             if (phone_command == PHONE_SYNC_COMMAND_START_GAME) {
-                const motion_state_t previous_state = current_state;
+                /* The game wants the radio off; nothing else will be sent. */
+                phone_sync_window_active = false;
+                phone_sync_stop_advertising();
+                vTaskDelay(pdMS_TO_TICKS(PHONE_SYNC_SHUTDOWN_GRACE_MS));
+                const esp_err_t shutdown_err = phone_sync_shutdown();
+                if (shutdown_err != ESP_OK) {
+                    ESP_LOGW(TAG, "BLE shutdown after command failed: %s",
+                             esp_err_to_name(shutdown_err));
+                }
+
                 current_state = motion_state_handle_event(
                     &motion_state,
                     MOTION_EVENT_GAME_REQUESTED,
@@ -462,54 +459,20 @@ void app_main(void)
                                     current_frame_us,
                                     esp_random(),
                                     last_tilt_x);
-                if (current_state != previous_state) {
-                    err = apply_state_entry_actions(current_state,
-                                                    current_frame_us,
-                                                    &previous_frame_us,
-                                                    &previous_sleep_frame_us,
-                                                    &sleep_frame_index,
-                                                    &previous_time_frame_us);
-                    if (err != ESP_OK) {
-                        break;
-                    }
-                }
                 ESP_LOGW(TAG, "Breakout started from phone command");
+            } else if (phone_command == PHONE_SYNC_COMMAND_SHOW_TIME) {
+                /*
+                 * Asked for by hand. The radio stays up: the person is holding
+                 * the phone and may well press something else next.
+                 */
+                current_state = motion_state_handle_event(
+                    &motion_state,
+                    MOTION_EVENT_TIME_REQUESTED,
+                    true,
+                    current_frame_us);
+                ESP_LOGW(TAG, "Clock shown on request");
             }
-        }
 
-        device_clock_datetime_t phone_datetime;
-        if (phone_sync_available &&
-            phone_sync_get_datetime_update(&phone_datetime)) {
-            device_clock_set_datetime(&device_clock,
-                                      &phone_datetime,
-                                      current_frame_us);
-            if (step_counter_get_date_key(&step_counter) !=
-                device_clock_date_key(&phone_datetime)) {
-                step_counter_init(&step_counter,
-                                  device_clock_date_key(&phone_datetime));
-            }
-            phone_sync_window_active = false;
-            phone_sync_stop_advertising();
-            vTaskDelay(pdMS_TO_TICKS(PHONE_SYNC_SHUTDOWN_GRACE_MS));
-            const esp_err_t shutdown_err = phone_sync_shutdown();
-            if (shutdown_err != ESP_OK) {
-                ESP_LOGW(TAG, "BLE shutdown after sync failed: %s",
-                         esp_err_to_name(shutdown_err));
-            }
-            ESP_LOGW(TAG,
-                     "Clock synced from phone: %04u-%02u-%02u %02u:%02u:%02u",
-                     (unsigned int)phone_datetime.year,
-                     (unsigned int)phone_datetime.month,
-                     (unsigned int)phone_datetime.day,
-                     (unsigned int)phone_datetime.hour,
-                     (unsigned int)phone_datetime.minute,
-                     (unsigned int)phone_datetime.second);
-
-            const motion_state_t previous_state = current_state;
-            current_state = motion_state_handle_event(&motion_state,
-                                                      MOTION_EVENT_TIME_REQUESTED,
-                                                      true,
-                                                      current_frame_us);
             if (current_state != previous_state) {
                 err = apply_state_entry_actions(current_state,
                                                 current_frame_us,
@@ -523,6 +486,28 @@ void app_main(void)
             } else if (current_state == MOTION_STATE_TIME) {
                 previous_time_frame_us = 0;
             }
+        }
+
+        device_clock_datetime_t phone_datetime;
+        if (phone_sync_available &&
+            phone_sync_get_datetime_update(&phone_datetime)) {
+            device_clock_set_datetime(&device_clock,
+                                      &phone_datetime,
+                                      current_frame_us);
+            /*
+             * Setting the clock no longer takes the screen or drops the radio.
+             * A background sync should correct the time and leave the keychain
+             * alone; the clock appears when someone asks for it, which is
+             * TIME:SHOW, and the next button press needs somewhere to arrive.
+             */
+            ESP_LOGW(TAG,
+                     "Clock synced from phone: %04u-%02u-%02u %02u:%02u:%02u",
+                     (unsigned int)phone_datetime.year,
+                     (unsigned int)phone_datetime.month,
+                     (unsigned int)phone_datetime.day,
+                     (unsigned int)phone_datetime.hour,
+                     (unsigned int)phone_datetime.minute,
+                     (unsigned int)phone_datetime.second);
         }
 
         if (current_state == MOTION_STATE_TIME &&
@@ -600,8 +585,7 @@ void app_main(void)
                     current_frame_us,
                     motion_state_entered_at_us(&motion_state),
                     &previous_time_frame_us,
-                    &device_clock,
-                    &step_counter);
+                    &device_clock);
             }
 
             if (!display_render_succeeded_or_deferred(
@@ -625,10 +609,6 @@ void app_main(void)
             previous_low_power_sensor_read_us = current_frame_us;
         }
         device_clock_get_datetime(&device_clock, current_frame_us, &datetime);
-        step_counter_update(&step_counter,
-                            &raw_data,
-                            device_clock_date_key(&datetime),
-                            current_frame_us);
 
         const motion_detector_result_t detector_result =
             motion_detector_update(&motion_detector, &raw_data,
@@ -706,10 +686,9 @@ void app_main(void)
             const int tilt_x_milligravity = (int)(tilt_x * 1000.0f);
             const int tilt_y_milligravity = (int)(tilt_y * 1000.0f);
             ESP_LOGI(TAG,
-                     "State=%s event=%s steps=%lu delta=%d still=%lld ms raw: X=%d (%d mg), Y=%d (%d mg), Z=%d",
+                     "State=%s event=%s delta=%d still=%lld ms raw: X=%d (%d mg), Y=%d (%d mg), Z=%d",
                      motion_state_name(current_state),
                      motion_event_name(event),
-                     (unsigned long)step_counter_get_steps_today(&step_counter),
                      detector_result.raw_delta,
                      detector_result.stillness_us / 1000,
                      raw_data.x, tilt_x_milligravity,
@@ -749,8 +728,7 @@ void app_main(void)
                 current_frame_us,
                 motion_state_entered_at_us(&motion_state),
                 &previous_time_frame_us,
-                &device_clock,
-                &step_counter);
+                &device_clock);
             if (!display_render_succeeded_or_deferred(
                     "Time",
                     err,

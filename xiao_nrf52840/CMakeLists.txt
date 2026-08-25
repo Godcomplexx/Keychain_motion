@@ -22,7 +22,6 @@ target_sources(app PRIVATE
     ${KEYCHAIN_ROOT}/components/motion_state/motion_state.c
     ${KEYCHAIN_ROOT}/components/pet_behavior/pet_behavior.c
     ${KEYCHAIN_ROOT}/components/pet_face/pet_face.c
-    ${KEYCHAIN_ROOT}/components/step_counter/step_counter.c
     ${KEYCHAIN_ROOT}/components/time_animation/time_animation.c
 )
 
@@ -41,7 +40,6 @@ target_include_directories(app PRIVATE
     ${KEYCHAIN_ROOT}/components/pet_behavior/include
     ${KEYCHAIN_ROOT}/components/pet_face/include
     ${KEYCHAIN_ROOT}/components/phone_sync/include
-    ${KEYCHAIN_ROOT}/components/step_counter/include
     ${KEYCHAIN_ROOT}/components/time_animation/include
 )
 

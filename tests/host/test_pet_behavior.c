@@ -41,17 +41,22 @@ static bool test_boot_reaction_expires(void)
     return true;
 }
 
-static bool test_second_shake_escalates(void)
+static bool test_jolt_and_shake_are_different_feelings(void)
 {
     pet_behavior_t pet;
     pet_context_t context = normal_context();
 
+    /*
+     * One knock is a fright; sustained shaking is provocation. They used to be
+     * the same event, with the second one escalating - which meant a single
+     * knock could never look angry and a deliberate shake had to be repeated
+     * before it did. The adapter now tells them apart before they get here.
+     */
     pet_behavior_init(&pet, 1000U, 2U);
-    pet_behavior_post(&pet, PET_EVENT_SHAKEN, 1000U);
+    pet_behavior_post(&pet, PET_EVENT_JOLT, 1000U);
     pet_behavior_update(&pet, &context, 1000U);
     CHECK(pet_behavior_view(&pet)->id == PET_SURPRISED);
 
-    /* A second shake inside five seconds intentionally replaces surprise. */
     pet_behavior_post(&pet, PET_EVENT_SHAKEN, 2000U);
     pet_behavior_update(&pet, &context, 2000U);
     CHECK(pet_behavior_view(&pet)->id == PET_ANGRY);
@@ -91,7 +96,7 @@ static bool test_low_battery_is_sleepy(void)
 int main(void)
 {
     CHECK(test_boot_reaction_expires());
-    CHECK(test_second_shake_escalates());
+    CHECK(test_jolt_and_shake_are_different_feelings());
     CHECK(test_sleep_requires_a_wake_sensor());
     CHECK(test_low_battery_is_sleepy());
 

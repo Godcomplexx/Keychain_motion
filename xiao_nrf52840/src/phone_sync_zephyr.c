@@ -96,7 +96,7 @@ static ssize_t read_characteristic(struct bt_conn *conn,
                                    uint16_t length,
                                    uint16_t offset)
 {
-    static const char help[] = "time or GAME:START";
+    static const char help[] = "time, TIME:SHOW or GAME:START";
     return bt_gatt_attr_read(conn, attr, buffer, length, offset,
                              help, sizeof(help) - 1U);
 }
@@ -119,6 +119,14 @@ static ssize_t write_characteristic(struct bt_conn *conn,
     char text[PHONE_SYNC_WRITE_MAX_LEN + 1U];
     memcpy(text, buffer, length);
     text[length] = '\0';
+
+    if (strcmp(text, "TIME:SHOW") == 0) {
+        k_mutex_lock(&s_state_lock, K_FOREVER);
+        s_pending_command = PHONE_SYNC_COMMAND_SHOW_TIME;
+        k_mutex_unlock(&s_state_lock);
+        ESP_LOGW(TAG, "Show time command received");
+        return length;
+    }
 
     if (strcmp(text, "GAME:START") == 0) {
         k_mutex_lock(&s_state_lock, K_FOREVER);
