@@ -444,6 +444,23 @@ android_time_sync/app/build/outputs/apk/debug/app-debug.apk
 виде рендеров; фотографии собранного железа появятся, когда будет припаян
 акселерометр и напечатан корпус.
 
+## Благодарности
+
+Словарь век процедурного лица — плоские веки, нижнее веко и `glare`, треугольная
+бровь к переносице, — перенесён из движка глаз Pip.
+
+> Originally created by Hamza Yeşilmen (HamzaYslmn).
+> Source: https://github.com/HamzaYslmn/
+> Sponsor: https://github.com/sponsors/HamzaYslmn
+
+Текст лицензии сохранён в
+[THIRD_PARTY_LICENSES/esp-bridge-mcp-robot-LICENSE.txt](THIRD_PARTY_LICENSES/esp-bridge-mcp-robot-LICENSE.txt).
+Это **изменённая производная реализация**, а не оригинал: формы перенесены на C
+под монохромный экран 128×64 и встроены в собственную систему поведений.
+
+Обрати внимание: лицензия не является open-source в смысле OSI и разрешает
+**только личное некоммерческое использование**.
+
 ## Документация
 
 - [Архитектура и устройство прошивки](docs/ARCHITECTURE.md)

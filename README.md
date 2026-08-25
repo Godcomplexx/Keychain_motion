@@ -442,6 +442,24 @@ These show version 1 running. The version 2 board and enclosure appear as
 renders further up; photographs of the assembled version 2 hardware will be
 added once the accelerometer is soldered and the case is printed.
 
+## Attribution
+
+The procedural face's lid vocabulary - flat lids, the lower lid, and the glare,
+a triangular brow dropping towards the nose - is ported from the Pip eye engine.
+
+> Originally created by Hamza Yeşilmen (HamzaYslmn).
+> Source: https://github.com/HamzaYslmn/
+> Sponsor: https://github.com/sponsors/HamzaYslmn
+
+The licence text is preserved in
+[THIRD_PARTY_LICENSES/esp-bridge-mcp-robot-LICENSE.txt](THIRD_PARTY_LICENSES/esp-bridge-mcp-robot-LICENSE.txt).
+This is a **modified derivative implementation**, not the original: the shapes
+were rewritten in C for a 128x64 mono display and driven by a different
+behaviour system.
+
+Note that the licence is not OSI open source and permits **personal,
+non-commercial use only**.
+
 ## Documentation
 
 - [Architecture and software design](docs/ARCHITECTURE.md)

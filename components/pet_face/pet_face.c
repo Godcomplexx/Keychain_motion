@@ -39,8 +39,14 @@ typedef struct {
     int gaze_y;
     int group_dx;
     int group_dy;
-    int lid_depth;
-    int lid_slant;
+    /*
+     * Lids as a fraction of eye height rather than pixels, so a mood keeps its
+     * proportions when the eye grows or shrinks. Ported from the Pip engine.
+     */
+    int lid_top_percent;
+    int lid_bottom_percent;
+    /* Non-zero draws an inner-down brow instead of a flat top lid. */
+    int glare_percent;
     bool arc_eyes;
     bool allow_blink;
     /*
@@ -190,6 +196,63 @@ static void fill_round_rect(int cx, int cy, int width, int height,
 }
 
 /*
+ * The three lid shapes below are ported from the Pip eye engine, whose whole
+ * mood vocabulary is a handful of lid carves over a rounded rectangle. A mood
+ * there is one line - anger is a glare, boredom is flat half-lids - and the
+ * expressiveness comes from having the right few shapes rather than from many
+ * of them.
+ *
+ * Originally created by Hamza Yeşilmen (HamzaYslmn).
+ * Source:  https://github.com/HamzaYslmn/
+ * Sponsor: https://github.com/sponsors/HamzaYslmn
+ * Licence: THIRD_PARTY_LICENSES/esp-bridge-mcp-robot-LICENSE.txt
+ * Adapted to C for a 128x64 mono display; not the original implementation.
+ */
+
+/*
+ * Flat lids: cover down to top_percent of the eye, and up from bottom_percent.
+ * A lower lid is what separates a squint from a droop, and this renderer had
+ * no way to draw one before.
+ */
+static void paint_lids(int cx, int cy, int width, int height,
+                       int top_percent, int bottom_percent)
+{
+    const int x0 = cx - width / 2;
+    const int y0 = cy - height / 2;
+
+    if (top_percent > 0) {
+        const int depth = (height * top_percent) / 100;
+        fill_rect(x0, y0, width, depth, false);
+    }
+    if (bottom_percent < 100) {
+        const int edge = (height * bottom_percent) / 100;
+        fill_rect(x0, y0 + edge, width, height - edge, false);
+    }
+}
+
+/*
+ * Inner-down brow: a triangle whose tip drops towards the nose. This is the
+ * shape that reads as a glare, and it is markedly angrier than shaving a
+ * slanted band off the top.
+ */
+static void paint_glare(int cx, int cy, int width, int height,
+                        int depth_percent, bool is_right)
+{
+    const int x0 = cx - width / 2;
+    const int y0 = cy - height / 2;
+    const int tip_depth = (height * depth_percent) / 100;
+
+    for (int column = 0; column < width; ++column) {
+        /* Full height at the outer edge, tapering to the tip at the nose. */
+        const int from_outer = is_right ? (width - 1 - column) : column;
+        const int depth = (tip_depth * from_outer) / (width > 1 ? width - 1 : 1);
+        for (int row = 0; row < depth && row < height; ++row) {
+            oled_display_set_pixel(x0 + column, y0 + row, false);
+        }
+    }
+}
+
+/*
  * Erase a slanted band from the top of an eye. A positive slant makes the lid
  * dig deeper on the right-hand side, which is how an angry brow is built.
  */
@@ -282,8 +345,9 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
     frame->gaze_y = 0;
     frame->group_dx = 0;
     frame->group_dy = 0;
-    frame->lid_depth = 0;
-    frame->lid_slant = 0;
+    frame->lid_top_percent = 0;
+    frame->lid_bottom_percent = 100;
+    frame->glare_percent = 0;
     frame->arc_eyes = false;
     frame->allow_blink = true;
     frame->track_tilt = false;
@@ -306,7 +370,7 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
     case PET_BORED: {
         frame->eye_width = 24;
         frame->eye_height = 22;
-        frame->lid_depth = 4;
+        frame->lid_top_percent = 50;   /* Pip's bored: flat half-lids. */
 
         /*
          * The gaze parks off to one side and stays there for a few seconds
@@ -351,11 +415,11 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
         const float nod = phase(now_ms, 3000U);
         if (nod < 0.85f) {
             const float falling = nod / 0.85f;
-            frame->lid_depth = 4 + (int)(falling * 16.0f);
+            frame->lid_top_percent = 15 + (int)(falling * 65.0f);
             frame->group_dy = (int)(falling * 5.0f);
         } else {
             const float waking = (nod - 0.85f) / 0.15f;
-            frame->lid_depth = 20 - (int)(waking * 16.0f);
+            frame->lid_top_percent = 80 - (int)(waking * 65.0f);
             frame->group_dy = (int)((1.0f - waking) * 5.0f);
         }
 
@@ -410,8 +474,7 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
     case PET_ANGRY:
         frame->eye_width = 30;
         frame->eye_height = 24;
-        frame->lid_depth = 5;
-        frame->lid_slant = 8;
+        frame->glare_percent = 60;     /* Pip's angry: inner-down brow. */
         if (elapsed < 350U) {
             /* A short tremble, then the pet just glares. */
             frame->group_dx = ((elapsed / 45U) % 2U == 0U) ? 3 : -3;
@@ -463,8 +526,7 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
         frame->rotation = turn * (TWO_PI / 2.0f);
         frame->eye_width = 30;
         frame->eye_height = 24;
-        frame->lid_depth = 5;
-        frame->lid_slant = 6;
+        frame->glare_percent = 45;
         /* A slow indignant wobble once it has settled upside down. */
         frame->group_dx = (int)(oscillate(now_ms, 900U) * 2.0f * turn);
         break;
@@ -481,7 +543,7 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
         frame->eye_width = 28;
         /* Breathing, slow enough to read as calm rather than as animation. */
         frame->eye_height = 22 + (int)(oscillate(now_ms, 3400U) * 3.0f);
-        frame->lid_depth = 12;
+        frame->lid_top_percent = 45;   /* Pip's chill: heavy-lidded. */
         frame->gaze_y = 2;
         /*
          * A deliberately large lean. Rocking measures about a third of a g,
@@ -699,11 +761,16 @@ esp_err_t pet_face_render(const pet_view_t *view, uint32_t now_ms)
 
         fill_round_rect(center_x, eye_center_y, frame.eye_width, eye_height,
                         frame.radius, true);
-        /* Skip the brow mid-blink: it would just eat the whole closed eye. */
-        if (frame.lid_depth > 0 && openness > 50) {
-            const int slant = (eye == 0) ? frame.lid_slant : -frame.lid_slant;
-            cut_lid(center_x, eye_center_y, frame.eye_width, eye_height,
-                    frame.lid_depth, slant);
+        /* Skip the lids mid-blink: they would just eat the whole closed eye. */
+        if (openness > 50) {
+            if (frame.glare_percent > 0) {
+                paint_glare(center_x, eye_center_y, frame.eye_width, eye_height,
+                            frame.glare_percent, eye == 1);
+            }
+            if (frame.lid_top_percent > 0 || frame.lid_bottom_percent < 100) {
+                paint_lids(center_x, eye_center_y, frame.eye_width, eye_height,
+                           frame.lid_top_percent, frame.lid_bottom_percent);
+            }
         }
     }
 
