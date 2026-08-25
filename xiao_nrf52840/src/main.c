@@ -83,15 +83,21 @@
 /*
  * Gravity pointing the wrong way along Z, held long enough to be deliberate.
  *
- * Which sign means inverted cannot be worked out from the layout - U5 sits on
- * the top layer along with everything else - nor from a reading alone, because
- * a reading only says where the board is, not which way it is supposed to be.
- * Samples taken minutes apart showed Z = -0.88 g and Z = +0.91 g, both while
- * resting. So this follows the person holding it: negative Z is inverted.
- * The trigger logs its Z, which makes checking it a glance rather than a guess.
+ * Which Z sign means inverted is not derivable. Not from the layout - U5 shares
+ * the top layer with everything else - and not from a reading either, because a
+ * reading says where the board is, not which way it is meant to be. Samples
+ * taken minutes apart showed -0.88 g and +0.91 g, both at rest, and picking a
+ * sign by hand got it wrong twice.
+ *
+ * So the firmware stops guessing and learns instead: whichever way up the
+ * keychain is when it starts is "upright", and the opposite is inverted. That
+ * makes the rule something a person can state without ambiguity, and a power
+ * cycle in the normal position is the whole recalibration procedure.
  */
 #define UPSIDE_DOWN_G 0.55f
 #define UPSIDE_DOWN_HOLD_US 600000
+/* Ignore near-vertical startups, where Z carries no orientation information. */
+#define UPRIGHT_REFERENCE_MIN_G 0.40f
 
 /*
  * Rocking is slow, gentle and repetitive: several direction changes inside a
@@ -393,6 +399,7 @@ int main(void)
     int64_t free_fall_started_us = 0;
     int64_t last_free_fall_us = 0;
     int64_t upside_down_started_us = 0;
+    int upright_z_sign = 0;
     int64_t last_nearby_motion_us = 0;
     int64_t rocking_window_started_us = 0;
     int rocking_reversals = 0;
@@ -749,8 +756,18 @@ int main(void)
                 free_fall_started_us = 0;
             }
 
-            /* Held inverted, long enough that it is not a passing wave. */
-            if (tilt_z <= -UPSIDE_DOWN_G) {
+            /* Learn which way up it started; that becomes "upright". */
+            if (upright_z_sign == 0 &&
+                (tilt_z >= UPRIGHT_REFERENCE_MIN_G ||
+                 tilt_z <= -UPRIGHT_REFERENCE_MIN_G)) {
+                upright_z_sign = (tilt_z > 0.0f) ? 1 : -1;
+                ESP_LOGI(TAG, "Upright reference learned: Z = %.2f g",
+                         (double)tilt_z);
+            }
+
+            /* Held inverted relative to that, long enough to be deliberate. */
+            if (upright_z_sign != 0 &&
+                (float)upright_z_sign * tilt_z <= -UPSIDE_DOWN_G) {
                 if (upside_down_started_us == 0) {
                     upside_down_started_us = now_us;
                 } else if (now_us - upside_down_started_us >=
