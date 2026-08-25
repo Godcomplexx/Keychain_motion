@@ -438,13 +438,20 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
     }
 
     case PET_SOOTHED:
-        /* Lids heavy, everything slow: this is the state that calms it. */
+        /*
+         * Told apart from bored and sleepy by motion rather than by shape.
+         * All three are "heavy lids", and on a 128x64 display the difference
+         * between four and thirteen pixels of eyelid is not something anyone
+         * can name. So this one leans along with the rocking: the giveaway is
+         * that the face is going with you, not that it looks tired.
+         */
         frame->eye_width = 28;
-        frame->eye_height = 24;
-        frame->lid_depth = 10;
+        /* Breathing, slow enough to read as calm rather than as animation. */
+        frame->eye_height = 22 + (int)(oscillate(now_ms, 3400U) * 3.0f);
+        frame->lid_depth = 12;
         frame->gaze_y = 2;
-        frame->group_dx = (int)(oscillate(now_ms, 2600U) * 3.0f);
-        frame->group_dy = (int)(oscillate(now_ms, 5200U) * 1.5f);
+        frame->rotation = (float)view->tilt_x * 0.0035f;
+        frame->group_dx = (view->tilt_x * 5) / 100;
         break;
 
     case PET_STARTLED: {

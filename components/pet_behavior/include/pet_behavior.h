@@ -167,6 +167,7 @@ typedef struct {
     uint8_t bond;
     bool phone_window_open;
     bool charging;
+    bool being_rocked;
     bool sensor_present;
     bool initialized;
 } pet_behavior_t;

@@ -42,7 +42,14 @@
 #define TIME_STATE_DURATION_US 60000000
 #define SLEEP_STILLNESS_TIMEOUT_US 30000000
 #define MOTION_MOVEMENT_DELTA_THRESHOLD 80
-#define MOTION_SHAKE_DELTA_THRESHOLD 350
+/*
+ * Measured on real hands rather than guessed. A single tap on the case reaches
+ * 240 to 528 counts between samples; rocking it gently tops out around 204;
+ * resting on a desk is 1 to 3. The old 350 sat inside the range a tap produces,
+ * so roughly half of them registered and the rest did nothing, which is what
+ * made a jolt feel unreliable. 250 clears rocking and catches the weak taps.
+ */
+#define MOTION_SHAKE_DELTA_THRESHOLD 250
 #define MOTION_SHAKE_COUNT_REQUIRED 3
 #define MOTION_SHAKE_WINDOW_US 2500000
 #define PHONE_SYNC_WINDOW_US 60000000
@@ -135,7 +142,87 @@
 #define NEARBY_MOTION_MAX_DELTA 70
 #define NEARBY_MOTION_REARM_US 12000000
 
+/*
+ * Set to 1 to print a motion summary once a second.
+ *
+ * The thresholds for a jolt, a shake and rocking were all picked by reasoning
+ * about what the numbers ought to be, and all three turned out wrong on real
+ * hands. This reports the extremes actually reached, which is what the
+ * thresholds should have been derived from in the first place.
+ */
+#define MOTION_DEBUG 1
+#define MOTION_DEBUG_INTERVAL_US 1000000
+/*
+ * Testing on a cable is awkward - you cannot really drop a keychain that is
+ * tethered to a laptop. So the same summaries are also kept in RAM, which
+ * survives on battery, and the whole lot is printed when USB comes back. Only
+ * seconds where something happened are stored, so this covers a long session.
+ */
+#define MOTION_HISTORY_LEN 96
+#define MOTION_HISTORY_MIN_DELTA 30
+
 static const char *TAG = "keychain";
+
+#if MOTION_DEBUG
+/* One second of motion, kept so it can be read back after a cable-free test. */
+typedef struct {
+    uint32_t at_ms;
+    int16_t max_delta;
+    int16_t min_g_centi;
+    int16_t max_g_centi;
+    int16_t min_side_centi;
+    int16_t max_side_centi;
+    uint8_t peaks;
+    uint8_t reversals;
+    uint8_t behaviour;
+} motion_record_t;
+
+static motion_record_t s_motion_history[MOTION_HISTORY_LEN];
+static uint8_t s_motion_history_count;
+static uint8_t s_motion_history_next;
+
+static void motion_history_add(const motion_record_t *record)
+{
+    s_motion_history[s_motion_history_next] = *record;
+    s_motion_history_next =
+        (uint8_t)((s_motion_history_next + 1U) % MOTION_HISTORY_LEN);
+    if (s_motion_history_count < MOTION_HISTORY_LEN) {
+        ++s_motion_history_count;
+    }
+}
+
+/* Print oldest first, then forget: the next session starts clean. */
+static void motion_history_dump(void)
+{
+    if (s_motion_history_count == 0U) {
+        return;
+    }
+
+    ESP_LOGI("motion", "--- %u recorded second(s) while off the cable ---",
+             (unsigned)s_motion_history_count);
+    const uint8_t first = (uint8_t)((s_motion_history_next +
+                                     MOTION_HISTORY_LEN -
+                                     s_motion_history_count) %
+                                    MOTION_HISTORY_LEN);
+    for (uint8_t index = 0U; index < s_motion_history_count; ++index) {
+        const motion_record_t *record =
+            &s_motion_history[(first + index) % MOTION_HISTORY_LEN];
+        ESP_LOGI("motion",
+                 "t=%u.%03us delta=%d | g %d.%02d..%d.%02d | side %d..%d"
+                 " | peaks=%u rev=%u | %s",
+                 (unsigned)(record->at_ms / 1000U),
+                 (unsigned)(record->at_ms % 1000U),
+                 record->max_delta,
+                 record->min_g_centi / 100, record->min_g_centi % 100,
+                 record->max_g_centi / 100, record->max_g_centi % 100,
+                 record->min_side_centi, record->max_side_centi,
+                 (unsigned)record->peaks, (unsigned)record->reversals,
+                 pet_behavior_name((pet_behavior_id_t)record->behaviour));
+    }
+    s_motion_history_count = 0U;
+    s_motion_history_next = 0U;
+}
+#endif
 
 /*
  * On this PCB the USB 5 V rail feeds both the charger (U1) and the module VBUS
@@ -425,6 +512,13 @@ int main(void)
     int rocking_direction = 0;
     bool being_rocked = false;
     bool upside_down = false;
+    int64_t motion_debug_window_us = 0;
+    int debug_max_delta = 0;
+    int debug_peaks = 0;
+    float debug_min_magnitude = 9.0f;
+    float debug_max_magnitude = 0.0f;
+    float debug_min_side = 9.0f;
+    float debug_max_side = -9.0f;
     bool previous_charger_attached = false;
     bool sensorless_ble_announced = false;
     int64_t last_battery_sample_us = 0;
@@ -525,6 +619,12 @@ int main(void)
         const bool charger_attached = charger_is_attached();
         if (charger_attached != previous_charger_attached) {
             previous_charger_attached = charger_attached;
+#if MOTION_DEBUG
+            /* The cable is back and someone is watching: hand over the log. */
+            if (charger_attached) {
+                motion_history_dump();
+            }
+#endif
             pet_behavior_post(&pet,
                               charger_attached ? PET_EVENT_CHARGER_ATTACHED
                                                : PET_EVENT_CHARGER_DETACHED,
@@ -856,6 +956,64 @@ int main(void)
                 being_rocked = false;
             }
             being_rocked = rocking_reversals >= ROCKING_REVERSALS_REQUIRED;
+
+#if MOTION_DEBUG
+            /*
+             * Track the extremes rather than instantaneous values: a shake is
+             * over in a few frames, and a once-a-second average would hide
+             * exactly the peaks the thresholds are supposed to catch.
+             */
+            if (detector_result.raw_delta > debug_max_delta) {
+                debug_max_delta = detector_result.raw_delta;
+            }
+            if (detector_result.shake_peak) {
+                ++debug_peaks;
+            }
+            if (magnitude < debug_min_magnitude) {
+                debug_min_magnitude = magnitude;
+            }
+            if (magnitude > debug_max_magnitude) {
+                debug_max_magnitude = magnitude;
+            }
+            if (tilt_side < debug_min_side) { debug_min_side = tilt_side; }
+            if (tilt_side > debug_max_side) { debug_max_side = tilt_side; }
+
+            if (now_us - motion_debug_window_us >= MOTION_DEBUG_INTERVAL_US) {
+                motion_debug_window_us = now_us;
+
+                /* Keep the seconds worth keeping, for reading back later. */
+                if (debug_max_delta >= MOTION_HISTORY_MIN_DELTA ||
+                    debug_peaks > 0 || rocking_reversals > 0) {
+                    const motion_record_t record = {
+                        .at_ms = now_ms,
+                        .max_delta = (int16_t)debug_max_delta,
+                        .min_g_centi = (int16_t)(debug_min_magnitude * 100.0f),
+                        .max_g_centi = (int16_t)(debug_max_magnitude * 100.0f),
+                        .min_side_centi = (int16_t)(debug_min_side * 100.0f),
+                        .max_side_centi = (int16_t)(debug_max_side * 100.0f),
+                        .peaks = (uint8_t)debug_peaks,
+                        .reversals = (uint8_t)rocking_reversals,
+                        .behaviour = (uint8_t)pet_behavior_view(&pet)->id,
+                    };
+                    motion_history_add(&record);
+                }
+
+                ESP_LOGI("motion",
+                         "delta max=%d | g %.2f..%.2f | side %+.2f..%+.2f"
+                         " | peaks=%d rev=%d",
+                         debug_max_delta,
+                         (double)debug_min_magnitude,
+                         (double)debug_max_magnitude,
+                         (double)debug_min_side, (double)debug_max_side,
+                         debug_peaks, rocking_reversals);
+                debug_max_delta = 0;
+                debug_peaks = 0;
+                debug_min_magnitude = 9.0f;
+                debug_max_magnitude = 0.0f;
+                debug_min_side = 9.0f;
+                debug_max_side = -9.0f;
+            }
+#endif
 
             /* A tremor through the surface, with nobody holding it. */
             const int delta = detector_result.raw_delta;

@@ -402,11 +402,22 @@ void pet_behavior_post(pet_behavior_t *pet, pet_event_t event, uint32_t now_ms)
         register_activity_reset(pet, now_ms);
         gain_bond(pet, now_ms);
         /*
-         * During the particle game a tilt is the controller, not a request to
-         * look somewhere. Starting a P1 glance here would outrank the game and
-         * end it on the first move the player made.
+         * A glance is the least meaningful thing at its priority, and the
+         * motions that produce the meaningful ones swing the keychain past the
+         * tilt threshold several times a second. Shaking it fired anger and
+         * then buried it under a glance 0.3 s later, out of 1.8 s it should
+         * have lasted; rocking did the same to the soothed face. So anything
+         * already saying something more definite keeps the eyes.
+         *
+         * The particle game is on the list for a different reason: there a
+         * tilt is the controller, not a request to look somewhere.
          */
-        if (pet->transient_id != PET_ACT_FLUID) {
+        if (pet->transient_id != PET_SURPRISED &&
+            pet->transient_id != PET_ANGRY &&
+            pet->transient_id != PET_STARTLED &&
+            pet->transient_id != PET_GREETING &&
+            pet->transient_id != PET_ACT_FLUID &&
+            !pet->being_rocked) {
             (void)start_transient(pet,
                                   (event == PET_EVENT_TILT_LEFT)
                                       ? PET_LOOK_LEFT : PET_LOOK_RIGHT,
@@ -511,6 +522,7 @@ void pet_behavior_update(pet_behavior_t *pet,
 
     pet->sensor_present = context->sensor_present;
     pet->charging = context->charging;
+    pet->being_rocked = context->being_rocked;
     decay_bond(pet, now_ms);
 
     if (pet->transient_id != PET_NEUTRAL &&
