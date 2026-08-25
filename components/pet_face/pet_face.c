@@ -303,15 +303,30 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
         frame->track_tilt = true;
         break;
 
-    case PET_BORED:
+    case PET_BORED: {
         frame->eye_width = 24;
         frame->eye_height = 22;
         frame->lid_depth = 4;
-        /* A bored gaze wanders on its own, but a tilt still wins. */
-        frame->gaze_x = (int)(oscillate(now_ms, 6400U) * 8.0f);
-        frame->group_dy = 1 + (int)(oscillate(now_ms, 5000U) * 2.0f);
+
+        /*
+         * The gaze parks off to one side and stays there for a few seconds
+         * before moving on. A continuous sweep reads as searching for
+         * something, and boredom is the opposite of searching.
+         */
+        static const int parks[4] = {-9, 7, -6, 9};
+        frame->gaze_x = parks[(now_ms / 3200U) % 4U];
+
+        /* And every few seconds, a whole-face sigh. */
+        const float sigh_phase = phase(now_ms, 5000U);
+        if (sigh_phase > 0.86f) {
+            const float sigh =
+                sinf((sigh_phase - 0.86f) / 0.14f * (TWO_PI / 2.0f));
+            frame->group_dy = (int)(sigh * 5.0f);
+            frame->eye_height -= (int)(sigh * 7.0f);
+        }
         frame->track_tilt = true;
         break;
+    }
 
     case PET_ASLEEP:
         frame->eye_width = 26;
@@ -322,15 +337,33 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
         frame->overlay = OVERLAY_SLEEP_Z;
         break;
 
-    case PET_SLEEPY:
+    case PET_SLEEPY: {
         frame->eye_height = 26;
-        frame->lid_depth = 13;
         frame->gaze_y = 3;
-        frame->group_dy = 1 + (int)(oscillate(now_ms, 3000U) * 1.5f);
+
+        /*
+         * Nodding off and catching itself: the lids creep shut over about two
+         * and a half seconds while the head sinks, then both snap back. That
+         * is a fight against sleep, which is a different thing from being
+         * asleep and from being bored, and it is legible from across a room in
+         * a way that a fixed eyelid depth is not.
+         */
+        const float nod = phase(now_ms, 3000U);
+        if (nod < 0.85f) {
+            const float falling = nod / 0.85f;
+            frame->lid_depth = 4 + (int)(falling * 16.0f);
+            frame->group_dy = (int)(falling * 5.0f);
+        } else {
+            const float waking = (nod - 0.85f) / 0.15f;
+            frame->lid_depth = 20 - (int)(waking * 16.0f);
+            frame->group_dy = (int)((1.0f - waking) * 5.0f);
+        }
+
         /* A low battery is exactly when the actual level is worth showing. */
         frame->overlay = OVERLAY_BATTERY;
         frame->track_tilt = true;
         break;
+    }
 
     case PET_CHARGING:
         frame->eye_height = 26;
