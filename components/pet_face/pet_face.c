@@ -450,8 +450,17 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
         frame->eye_height = 22 + (int)(oscillate(now_ms, 3400U) * 3.0f);
         frame->lid_depth = 12;
         frame->gaze_y = 2;
-        frame->rotation = (float)view->tilt_x * 0.0035f;
-        frame->group_dx = (view->tilt_x * 5) / 100;
+        /*
+         * A deliberately large lean. Rocking measures about a third of a g,
+         * which is a tilt reading near 35, so a gentle coefficient turned into
+         * two or three pixels of eye offset - invisible. At this rate the same
+         * rocking swings the eyes through a third of the display height, which
+         * is the whole point: the face is visibly going along with you.
+         */
+        frame->rotation = (float)view->tilt_x * 0.012f;
+        if (frame->rotation > 0.55f) { frame->rotation = 0.55f; }
+        if (frame->rotation < -0.55f) { frame->rotation = -0.55f; }
+        frame->group_dx = (view->tilt_x * 8) / 100;
         break;
 
     case PET_STARTLED: {

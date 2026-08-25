@@ -133,6 +133,13 @@
 #define ROCKING_MAX_TILT_G 0.70f
 #define ROCKING_REVERSALS_REQUIRED 4
 #define ROCKING_WINDOW_US 5000000
+/*
+ * Once rocking is recognised it stays recognised for this long, and every
+ * further reversal extends it. Resetting the count on a fixed window made the
+ * soothed face drop out and come back every few seconds, which read as the
+ * state flickering rather than as the pet being calmed.
+ */
+#define ROCKING_HOLD_US 3000000
 
 /*
  * Something moved nearby without picking the keychain up: a tremor above the
@@ -508,6 +515,7 @@ int main(void)
     int upright_z_sign = 0;
     int64_t last_nearby_motion_us = 0;
     int64_t rocking_window_started_us = 0;
+    int64_t rocking_hold_until_us = 0;
     int rocking_reversals = 0;
     int rocking_direction = 0;
     bool being_rocked = false;
@@ -940,22 +948,21 @@ int main(void)
             if (swing >= ROCKING_MIN_TILT_G && swing <= ROCKING_MAX_TILT_G) {
                 const int direction = (tilt_side > 0.0f) ? 1 : -1;
                 if (rocking_direction != 0 && direction != rocking_direction) {
-                    if (rocking_window_started_us == 0 ||
-                        now_us - rocking_window_started_us > ROCKING_WINDOW_US) {
-                        rocking_window_started_us = now_us;
-                        rocking_reversals = 0;
-                    }
                     ++rocking_reversals;
+                    rocking_window_started_us = now_us;
+                    if (rocking_reversals >= ROCKING_REVERSALS_REQUIRED) {
+                        rocking_hold_until_us = now_us + ROCKING_HOLD_US;
+                    }
                 }
                 rocking_direction = direction;
             }
+            /* Forget the count only after the rocking has actually stopped. */
             if (rocking_window_started_us != 0 &&
                 now_us - rocking_window_started_us > ROCKING_WINDOW_US) {
                 rocking_window_started_us = 0;
                 rocking_reversals = 0;
-                being_rocked = false;
             }
-            being_rocked = rocking_reversals >= ROCKING_REVERSALS_REQUIRED;
+            being_rocked = now_us < rocking_hold_until_us;
 
 #if MOTION_DEBUG
             /*
