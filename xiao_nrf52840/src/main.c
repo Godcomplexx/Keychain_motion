@@ -61,6 +61,14 @@
 /* Below this the keychain counts as level and the gaze rests in the middle. */
 #define TILT_DEAD_ZONE_G 0.06f
 /*
+ * Set to 1 to bring the particle game back. Switched off for now so the face
+ * can be judged on its own: FLIP takes over the whole display for 30 seconds
+ * at a time, which makes everything else hard to watch. Nothing else can start
+ * it - the activity scheduler never picks it - so this one switch is enough.
+ */
+#define PLAY_GESTURE_ENABLED 0
+
+/*
  * Tip it steeply and hold, like tipping a glass, and the particles come out.
  * Steep enough and long enough that ordinary handling cannot do it by accident.
  */
@@ -859,7 +867,8 @@ int main(void)
          */
         const float sideways = sensor_sample_valid
             ? sqrtf(tilt_x * tilt_x + tilt_y * tilt_y) : 0.0f;
-        if (sensor_sample_valid && sideways >= PLAY_GESTURE_TILT_G) {
+        if (PLAY_GESTURE_ENABLED && sensor_sample_valid &&
+            sideways >= PLAY_GESTURE_TILT_G) {
             if (play_gesture_started_us == 0) {
                 play_gesture_started_us = now_us;
                 /* Say so, so a tip that is deep enough but too brief is
