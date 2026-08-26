@@ -80,9 +80,9 @@ async def main(hold_seconds, pen_radius):
     device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=25.0)
     if device is None:
         raise SystemExit(
-            "%s not found. The keychain advertises whenever it is not playing "
-            "Breakout, so check that it is powered and not mid-game."
-            % DEVICE_NAME
+            "%s not found. The keychain advertises while it is awake and "
+            "for two minutes after it falls asleep, so pick it up and try "
+            "again; it is also silent while Breakout is running." % DEVICE_NAME
         )
 
     print("found %s at %s" % (DEVICE_NAME, device.address))

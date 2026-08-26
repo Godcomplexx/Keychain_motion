@@ -102,6 +102,94 @@ void oled_display_draw_text(int x, int y, const char *text)
     }
 }
 
+/*
+ * The same glyphs drawn as blocks of scale x scale pixels. A second, larger
+ * font would be several hundred bytes of table for the handful of digits a
+ * clock needs, and it would not look like this one - the point of the big
+ * digits is that they are visibly the same shapes, only nearer.
+ */
+static void draw_character_scaled(int x, int y, char character, int scale)
+{
+    const uint8_t *columns = font_5x7_find(character);
+    if (columns == NULL) {
+        return;
+    }
+
+    for (int column = 0; column < FONT_WIDTH; ++column) {
+        for (int row = 0; row < FONT_HEIGHT; ++row) {
+            if ((columns[column] & (1U << row)) == 0U) {
+                continue;
+            }
+            for (int block_y = 0; block_y < scale; ++block_y) {
+                for (int block_x = 0; block_x < scale; ++block_x) {
+                    oled_display_set_pixel(x + column * scale + block_x,
+                                           y + row * scale + block_y, true);
+                }
+            }
+        }
+    }
+}
+
+void oled_display_draw_text_scaled(int x, int y, const char *text, int scale)
+{
+    if (text == NULL) {
+        return;
+    }
+    if (scale < 1) {
+        scale = 1;
+    }
+
+    while (*text != '\0') {
+        draw_character_scaled(x, y, *text++, scale);
+        x += FONT_ADVANCE * scale;
+    }
+}
+
+int oled_display_text_width(const char *text, int scale)
+{
+    if (text == NULL) {
+        return 0;
+    }
+    if (scale < 1) {
+        scale = 1;
+    }
+
+    int characters = 0;
+    while (text[characters] != '\0') {
+        ++characters;
+    }
+    if (characters == 0) {
+        return 0;
+    }
+    /* The last glyph carries no trailing gap. */
+    return characters * FONT_ADVANCE * scale - scale;
+}
+
+void oled_display_draw_rect(int x, int y, int width, int height, bool on)
+{
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+
+    for (int px = x; px < x + width; ++px) {
+        oled_display_set_pixel(px, y, on);
+        oled_display_set_pixel(px, y + height - 1, on);
+    }
+    for (int py = y; py < y + height; ++py) {
+        oled_display_set_pixel(x, py, on);
+        oled_display_set_pixel(x + width - 1, py, on);
+    }
+}
+
+void oled_display_fill_rect(int x, int y, int width, int height, bool on)
+{
+    for (int py = y; py < y + height; ++py) {
+        for (int px = x; px < x + width; ++px) {
+            oled_display_set_pixel(px, py, on);
+        }
+    }
+}
+
 esp_err_t oled_display_init(void)
 {
     if (s_available) {

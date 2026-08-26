@@ -278,6 +278,13 @@ motion behavior, the BLE protocol and the Android app were developed.
 | `GAME` | Runs a tilt-controlled Breakout game locally on the ESP32-C3 |
 | `DRAW` | Mirrors what the phone's drawing pad is drawing |
 
+The clock screen is drawn in the same language as the app: a framed panel, a
+title with a rule under it, the reading itself at three times the font so it
+can be taken at a glance, and a bar along the bottom draining as the screen's
+fifteen seconds run out. [preview_time_screen.c](tests/host/preview_time_screen.c)
+prints it as ASCII on a PC, using the firmware's own glyph table, so its
+layout can be judged without flashing anything.
+
 A triple shake opens a temporary 60-second BLE window. Outside this window the
 keychain does not advertise, reducing unnecessary radio use. Version 2 dropped
 this in favour of continuous slow advertising, so that a button press in the app

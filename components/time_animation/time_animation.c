@@ -6,18 +6,32 @@
 
 #include "oled_display.h"
 
-#define PROGRESS_X 12
-#define PROGRESS_Y 56
-#define PROGRESS_WIDTH 104
-#define PROGRESS_HEIGHT 3
-#define TIME_TEXT_X 21
-#define DATE_TEXT_X 21
-#define STEPS_TEXT_X 21
-#define STATUS_TEXT_X 52
-#define TIME_TEXT_Y 12
-#define DATE_TEXT_Y 28
-#define STEPS_TEXT_Y 43
-#define STATUS_TEXT_Y 0
+/*
+ * The clock, drawn in the same language as the phone app: a hard framed
+ * panel, a title in small letter-spaced capitals with a rule under it, and
+ * the reading itself large enough to take at a glance.
+ *
+ * It used to be three lines of 5x7 text stacked in the middle of an empty
+ * screen, which is legible but says nothing about what it belongs to. The
+ * time is what someone came here to read, so it gets the room.
+ */
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+#define FRAME_INSET 3
+#define TITLE_Y 7
+#define RULE_Y 17
+/* Three times the 5x7 font: 21 px tall, which is as much as fits with the
+ * title bar and the footer both present. */
+#define BIG_SCALE 3
+#define BIG_Y 23
+#define FOOTER_Y 50
+#define PROGRESS_Y 59
+#define PROGRESS_HEIGHT 2
+/* The gap between the large HH:MM and the small seconds beside it. */
+#define SECONDS_GAP 4
+/* The 5x7 font's own height, needed to sit the seconds on the same baseline. */
+#define FONT_HEIGHT 7
 
 static unsigned int clamp_to_two_digits(uint8_t value)
 {
@@ -61,30 +75,29 @@ static unsigned int clamp_day(uint8_t day)
     return (unsigned int)day;
 }
 
-static void draw_filled_rect(int x, int y, int width, int height, bool on)
-{
-    for (int py = y; py < y + height; ++py) {
-        for (int px = x; px < x + width; ++px) {
-            oled_display_set_pixel(px, py, on);
-        }
-    }
-}
-
+/*
+ * How much of the time on screen is left, as a bar along the bottom edge.
+ * The screen closes itself, and a bar draining is the one way to say so
+ * without spending a line of text on it.
+ */
 static void draw_progress_bar(int64_t elapsed_us, int64_t duration_us)
 {
-    int filled_width = 0;
+    const int x = FRAME_INSET + 3;
+    const int width = SCREEN_WIDTH - 2 * x;
+    int remaining = width;
 
-    if (duration_us > 0 && elapsed_us > 0) {
-        filled_width = (int)((elapsed_us * PROGRESS_WIDTH) / duration_us);
-        if (filled_width > PROGRESS_WIDTH) {
-            filled_width = PROGRESS_WIDTH;
+    if (duration_us > 0) {
+        int64_t used = elapsed_us;
+        if (used < 0) {
+            used = 0;
         }
+        if (used > duration_us) {
+            used = duration_us;
+        }
+        remaining = (int)(((duration_us - used) * width) / duration_us);
     }
 
-    draw_filled_rect(PROGRESS_X, PROGRESS_Y,
-                     PROGRESS_WIDTH, PROGRESS_HEIGHT, false);
-    draw_filled_rect(PROGRESS_X, PROGRESS_Y,
-                     filled_width, PROGRESS_HEIGHT, true);
+    oled_display_fill_rect(x, PROGRESS_Y, remaining, PROGRESS_HEIGHT, true);
 }
 
 esp_err_t time_animation_render(const time_animation_view_t *view,
@@ -95,32 +108,58 @@ esp_err_t time_animation_render(const time_animation_view_t *view,
         return ESP_ERR_INVALID_ARG;
     }
 
-    char time_text[9];
+    char big_text[6];
+    char seconds_text[3];
     char date_text[11];
 
-    snprintf(time_text, sizeof(time_text),
-             "%02u:%02u:%02u",
+    snprintf(big_text, sizeof(big_text), "%02u:%02u",
              clamp_to_two_digits(view->hour),
-             clamp_to_two_digits(view->minute),
+             clamp_to_two_digits(view->minute));
+    snprintf(seconds_text, sizeof(seconds_text), "%02u",
              clamp_to_two_digits(view->second));
-    snprintf(date_text, sizeof(date_text),
-             "%04u-%02u-%02u",
+    snprintf(date_text, sizeof(date_text), "%04u-%02u-%02u",
              clamp_year(view->year),
              clamp_month(view->month),
              clamp_day(view->day));
 
+    /*
+     * SYNCED means a phone time write was accepted. NO SYNC means the screen
+     * is still showing the firmware's own count since power-up, which is the
+     * difference between a clock and a stopwatch nobody set.
+     */
+    const char *status = view->clock_synced ? "SYNCED" : "NO SYNC";
+
     oled_display_clear();
 
-    /*
-     * NO means the screen is still using the firmware fallback clock.
-     * OK means a phone time write was accepted and applied.
-     */
-    oled_display_draw_text(STATUS_TEXT_X, STATUS_TEXT_Y,
-                           view->clock_synced ? "OK" : "NO");
+    oled_display_draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, true);
+    oled_display_draw_text(FRAME_INSET + 3, TITLE_Y, "CLOCK");
+    oled_display_fill_rect(FRAME_INSET + 3, RULE_Y,
+                           SCREEN_WIDTH - 2 * (FRAME_INSET + 3), 1, true);
 
-    /* TIME state MVP: software clock plus approximate daily step count. */
-    oled_display_draw_text(TIME_TEXT_X, TIME_TEXT_Y, time_text);
-    oled_display_draw_text(DATE_TEXT_X, DATE_TEXT_Y, date_text);
+    /* The status sits at the right end of the title bar, as it does in the
+     * app's panel. */
+    const int status_width = oled_display_text_width(status, 1);
+    oled_display_draw_text(SCREEN_WIDTH - FRAME_INSET - 3 - status_width,
+                           TITLE_Y, status);
+
+    /*
+     * The hours and minutes are centred on the screen and the seconds hang off
+     * to the right of them. Centring the pair together instead pushed the part
+     * anyone actually reads off to the left.
+     */
+    const int big_width = oled_display_text_width(big_text, BIG_SCALE);
+    const int big_x = (SCREEN_WIDTH - big_width) / 2;
+
+    oled_display_draw_text_scaled(big_x, BIG_Y, big_text, BIG_SCALE);
+    /* Seconds ride along the bottom of the big digits rather than their top,
+     * so the two read as one reading instead of two numbers. */
+    oled_display_draw_text(big_x + big_width + SECONDS_GAP,
+                           BIG_Y + FONT_HEIGHT * BIG_SCALE - FONT_HEIGHT,
+                           seconds_text);
+
+    const int date_width = oled_display_text_width(date_text, 1);
+    oled_display_draw_text((SCREEN_WIDTH - date_width) / 2, FOOTER_Y,
+                           date_text);
     draw_progress_bar(elapsed_us, duration_us);
 
     return oled_display_present();

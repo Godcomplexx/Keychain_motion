@@ -21,6 +21,17 @@ void oled_display_set_pixel(int x, int y, bool on);
 /* Draw small 5x7 text into the framebuffer without sending it yet. */
 void oled_display_draw_text(int x, int y, const char *text);
 
+/* The same 5x7 glyphs as blocks, for headline text like the clock. */
+void oled_display_draw_text_scaled(int x, int y, const char *text, int scale);
+
+/* Width in pixels the text above will occupy, for centring it. */
+int oled_display_text_width(const char *text, int scale);
+
+/* Outline and solid rectangles, without sending anything yet. */
+void oled_display_draw_rect(int x, int y, int width, int height, bool on);
+
+void oled_display_fill_rect(int x, int y, int width, int height, bool on);
+
 /* Send the complete private framebuffer to the OLED. */
 esp_err_t oled_display_present(void);
 

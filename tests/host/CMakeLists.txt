@@ -37,3 +37,18 @@ target_include_directories(test_phone_commands PRIVATE
 )
 
 add_test(NAME phone_commands COMMAND test_phone_commands)
+
+# Not a test: it prints the clock screen as ASCII so its layout can be judged
+# without flashing a keychain. The glyph table it draws with is the
+# firmware's own, so what it shows is what the panel shows.
+add_executable(preview_time_screen
+    preview_time_screen.c
+    ../../components/time_animation/time_animation.c
+)
+
+target_include_directories(preview_time_screen PRIVATE
+    ../../components/time_animation/include
+    ../../components/oled_display/include
+    ../../components/oled_display
+    ../../xiao_nrf52840/include
+)
