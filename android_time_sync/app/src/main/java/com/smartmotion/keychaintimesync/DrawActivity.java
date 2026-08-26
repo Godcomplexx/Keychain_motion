@@ -14,6 +14,9 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Draw on the phone, watch it appear on the keychain.
  *
@@ -37,6 +40,24 @@ public final class DrawActivity extends Activity
     private int bufferedPoints;
     private boolean bufferStartsStroke;
     private boolean flushScheduled;
+
+    /*
+     * Every stroke the finger has made, so the picture can be put back after a
+     * reconnection. Without it the keychain would come back blank while the
+     * phone still showed the drawing, and the two would disagree about what is
+     * on screen. Strokes are replayed rather than the raster: the protocol
+     * carries points, and a few hundred of them fit in a handful of packets
+     * where eight thousand pixels would not.
+     */
+    private static final int HISTORY_POINT_LIMIT = 20000;
+
+    private final List<int[]> strokes = new ArrayList<>();
+    private final List<Integer> strokeRadii = new ArrayList<>();
+    private int[] currentStroke = new int[256];
+    private int currentStrokeCount;
+    private int currentStrokeRadius;
+    private int recordedPoints;
+    private boolean historyTruncated;
 
     private final Runnable flush = new Runnable() {
         @Override
@@ -82,11 +103,32 @@ public final class DrawActivity extends Activity
 
         panel.addView(RetroUi.sectionLabel(this, "Link"));
         statusText = RetroUi.body(this, "", 13, RetroUi.INK);
-        panel.addView(statusText, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        panel.addView(statusText, fullWidth());
 
         panel.addView(RetroUi.sectionLabel(this, "Canvas"));
+        panel.addView(createCanvas(), fullWidth());
+        panel.addView(createCaption(), fullWidth());
+
+        panel.addView(RetroUi.sectionLabel(this, "Pen size"));
+        panel.addView(createPenSizes());
+
+        panel.addView(RetroUi.sectionLabel(this, "Action"));
+        panel.addView(createActions());
+        panel.addView(createHint(), fullWidth());
+
+        page.addView(panel, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        return page;
+    }
+
+    private LinearLayout.LayoutParams fullWidth() {
+        return new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+    }
+
+    private View createCanvas() {
         drawView = new DrawView(this);
         drawView.setListener(this);
         drawView.setPenRadius(0);
@@ -101,10 +143,10 @@ public final class DrawActivity extends Activity
         frame.addView(drawView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
-        panel.addView(frame, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        return frame;
+    }
 
+    private View createCaption() {
         TextView caption = RetroUi.body(
                 this,
                 DrawView.CANVAS_WIDTH + " x " + DrawView.CANVAS_HEIGHT
@@ -113,14 +155,13 @@ public final class DrawActivity extends Activity
         caption.setLetterSpacing(0.18f);
         caption.setGravity(Gravity.CENTER);
         caption.setPadding(0, RetroUi.dp(this, 6), 0, 0);
-        panel.addView(caption, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        return caption;
+    }
 
-        panel.addView(RetroUi.sectionLabel(this, "Pen size"));
+    private View createPenSizes() {
         /* Four discrete widths, so a row of pills says more than a slider
          * would: you can see every choice and which one is active. */
-        panel.addView(RetroUi.segmented(
+        return RetroUi.segmented(
                 this, new String[] {"1PX", "3PX", "5PX", "7PX"}, 0,
                 index -> {
                     drawView.setPenRadius(index);
@@ -130,39 +171,39 @@ public final class DrawActivity extends Activity
                         flushBuffer();
                         session.sendPenRadius(index);
                     }
-                }));
+                });
+    }
 
-        panel.addView(RetroUi.sectionLabel(this, "Action"));
+    private View createActions() {
         Button clearButton = RetroUi.pill(this, "Clear");
         clearButton.setOnClickListener(view -> {
             bufferedPoints = 0;
+            forgetHistory();
             drawView.clear();
             if (session != null) {
                 session.sendClear();
             }
         });
+
         Button doneButton = RetroUi.pill(this, "Done");
         doneButton.setOnClickListener(view -> finish());
-        panel.addView(RetroUi.buttonRow(this, clearButton, doneButton));
+        return RetroUi.buttonRow(this, clearButton, doneButton);
+    }
 
+    private View createHint() {
         TextView hint = RetroUi.body(
                 this,
                 "The picture stays on the keychain until you clear it or "
                         + "close the pad.",
                 11, RetroUi.MUTED);
         hint.setPadding(0, RetroUi.dp(this, 14), 0, 0);
-        panel.addView(hint, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        page.addView(panel, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        return page;
+        return hint;
     }
 
     @Override
     public void onPoint(int x, int y, boolean startsStroke) {
+        recordPoint(x, y, startsStroke);
+
         if (startsStroke) {
             /* A new stroke must not be appended to the previous packet, or the
              * keychain joins them with a line across the picture. */
@@ -181,6 +222,85 @@ public final class DrawActivity extends Activity
         if (!flushScheduled) {
             flushScheduled = true;
             handler.postDelayed(flush, FLUSH_INTERVAL_MS);
+        }
+    }
+
+    private void recordPoint(int x, int y, boolean startsStroke) {
+        if (startsStroke) {
+            commitStroke();
+            currentStrokeRadius = drawView.getPenRadius();
+        }
+        if (recordedPoints >= HISTORY_POINT_LIMIT) {
+            historyTruncated = true;
+            return;
+        }
+
+        if (currentStrokeCount * 2 + 2 > currentStroke.length) {
+            int[] grown = new int[currentStroke.length * 2];
+            System.arraycopy(currentStroke, 0, grown, 0, currentStroke.length);
+            currentStroke = grown;
+        }
+        currentStroke[currentStrokeCount * 2] = x;
+        currentStroke[currentStrokeCount * 2 + 1] = y;
+        ++currentStrokeCount;
+        ++recordedPoints;
+    }
+
+    private void commitStroke() {
+        if (currentStrokeCount == 0) {
+            return;
+        }
+        int[] finished = new int[currentStrokeCount * 2];
+        System.arraycopy(currentStroke, 0, finished, 0, finished.length);
+        strokes.add(finished);
+        strokeRadii.add(currentStrokeRadius);
+        currentStrokeCount = 0;
+    }
+
+    private void forgetHistory() {
+        strokes.clear();
+        strokeRadii.clear();
+        currentStrokeCount = 0;
+        recordedPoints = 0;
+        historyTruncated = false;
+    }
+
+    /** Draws the whole picture again on a keychain that has just come back. */
+    private void replayCanvas() {
+        commitStroke();
+        bufferedPoints = 0;
+        bufferStartsStroke = false;
+
+        session.sendClear();
+        if (historyTruncated) {
+            /* Replaying part of a drawing would put a wrong picture on the
+             * keychain, which is worse than an honest blank one. */
+            setStatus("Reconnected - the picture was too long to restore");
+            forgetHistory();
+            session.sendPenRadius(drawView.getPenRadius());
+            drawView.clear();
+            return;
+        }
+
+        for (int index = 0; index < strokes.size(); ++index) {
+            session.sendPenRadius(strokeRadii.get(index));
+            sendStroke(strokes.get(index));
+        }
+        session.sendPenRadius(drawView.getPenRadius());
+    }
+
+    private void sendStroke(int[] points) {
+        final int count = points.length / 2;
+        final int perPacket = Math.max(1, session.pointsPerPacket());
+        int sent = 0;
+        boolean startsStroke = true;
+        while (sent < count) {
+            final int take = Math.min(perPacket, count - sent);
+            int[] slice = new int[take * 2];
+            System.arraycopy(points, sent * 2, slice, 0, take * 2);
+            session.sendPoints(startsStroke, slice, take);
+            startsStroke = false;
+            sent += take;
         }
     }
 
@@ -208,7 +328,14 @@ public final class DrawActivity extends Activity
     }
 
     @Override
-    public void onReady() {
+    public void onReady(boolean resumed) {
+        if (resumed) {
+            setStatus("Reconnected - restoring the picture");
+            replayCanvas();
+            setStatus("Connected - draw away");
+            return;
+        }
+
         setStatus("Connected - draw away");
         session.sendClear();
         session.sendPenRadius(drawView.getPenRadius());

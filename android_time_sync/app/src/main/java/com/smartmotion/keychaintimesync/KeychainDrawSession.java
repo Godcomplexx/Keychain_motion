@@ -17,6 +17,7 @@ import android.content.Context;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
@@ -35,8 +36,12 @@ final class KeychainDrawSession {
     interface Listener {
         void onLog(String message);
 
-        /** The keychain is in drawing mode and packets will be delivered. */
-        void onReady();
+        /**
+         * The keychain is in drawing mode and packets will be delivered.
+         * Called again after a reconnection, with {@code resumed} true, so the
+         * caller can put the picture back rather than start from blank.
+         */
+        void onReady(boolean resumed);
 
         void onClosed(String reason);
     }
@@ -55,6 +60,18 @@ final class KeychainDrawSession {
             UUID.fromString("11223344-5566-7788-9a49-315b10371344");
 
     private static final long SCAN_TIMEOUT_MS = 20000L;
+    /*
+     * The link drops for reasons that have nothing to do with the person
+     * drawing - the background sync letting go of the radio, the keychain
+     * ending a game, a stray supervision timeout. While the pad is on screen,
+     * every one of those should be a pause rather than the end.
+     */
+    private static final long RETRY_BASE_MS = 500L;
+    private static final long RETRY_MAX_MS = 4000L;
+    /* How long the stack is given to finish tearing down someone else's link
+     * before this one starts scanning. */
+    private static final long RADIO_SETTLE_MS = 400L;
+    private static final long RADIO_WAIT_TIMEOUT_MS = 5000L;
     private static final int REQUESTED_MTU = 247;
     /* Until the phone and keychain agree on a larger MTU, a write may carry
      * only 20 bytes of payload. */
@@ -70,16 +87,25 @@ final class KeychainDrawSession {
     private BluetoothGattCharacteristic commandCharacteristic;
     private BluetoothGattCharacteristic drawCharacteristic;
     private boolean scanning;
-    private boolean closed;
+    /** Set once the pad is dismissed for good; retries stop honouring it. */
+    private boolean stopped;
     private boolean ready;
+    private boolean everReady;
     private boolean writeInFlight;
+    /*
+     * Tearing an attempt down disconnects, and the disconnect callback is
+     * another reason to retry - so without this the first failure would
+     * schedule two attempts, and each of those two more.
+     */
+    private boolean retryPending;
+    private int attempt;
     private int payloadLimit = FALLBACK_PAYLOAD;
 
     private final Runnable scanTimeout = new Runnable() {
         @Override
         public void run() {
             if (!ready) {
-                close("Keychain not found");
+                retry("Keychain not found");
             }
         }
     };
@@ -87,7 +113,7 @@ final class KeychainDrawSession {
     private final ScanCallback scanCallback = new ScanCallback() {
         @Override
         public void onScanResult(int callbackType, ScanResult result) {
-            if (closed) {
+            if (stopped || gatt != null) {
                 return;
             }
             String name = result.getDevice() == null
@@ -107,7 +133,7 @@ final class KeychainDrawSession {
 
         @Override
         public void onScanFailed(int errorCode) {
-            close("Scan failed: " + errorCode);
+            retry("Scan failed: " + errorCode);
         }
     };
 
@@ -124,7 +150,7 @@ final class KeychainDrawSession {
                         }
                     } else if (newState ==
                                BluetoothProfile.STATE_DISCONNECTED) {
-                        close("Keychain disconnected");
+                        retry("Keychain disconnected");
                     }
                 }
 
@@ -143,14 +169,14 @@ final class KeychainDrawSession {
                 public void onServicesDiscovered(BluetoothGatt gatt,
                                                  int status) {
                     if (status != BluetoothGatt.GATT_SUCCESS) {
-                        close("Service discovery failed: " + status);
+                        retry("Service discovery failed: " + status);
                         return;
                     }
 
                     BluetoothGattService service =
                             gatt.getService(SERVICE_UUID);
                     if (service == null) {
-                        close("Keychain service not found");
+                        retry("Keychain service not found");
                         return;
                     }
 
@@ -159,6 +185,7 @@ final class KeychainDrawSession {
                     drawCharacteristic = service.getCharacteristic(DRAW_UUID);
                     if (commandCharacteristic == null ||
                         drawCharacteristic == null) {
+                        /* Not a transient fault: retrying would never help. */
                         close("This keychain firmware has no drawing pad");
                         return;
                     }
@@ -176,14 +203,17 @@ final class KeychainDrawSession {
                         int status) {
                     if (COMMAND_UUID.equals(characteristic.getUuid())) {
                         if (status != BluetoothGatt.GATT_SUCCESS) {
-                            close("Could not open the drawing pad: " + status);
+                            retry("Could not open the drawing pad: " + status);
                             return;
                         }
                         if (!ready) {
                             ready = true;
+                            attempt = 0;
                             handler.removeCallbacks(scanTimeout);
-                            log("Drawing pad open");
-                            listener.onReady();
+                            final boolean resumed = everReady;
+                            everReady = true;
+                            log(resumed ? "Reconnected" : "Drawing pad open");
+                            listener.onReady(resumed);
                         }
                         return;
                     }
@@ -199,6 +229,33 @@ final class KeychainDrawSession {
     }
 
     void start() {
+        if (stopped) {
+            return;
+        }
+        waitForRadio(SystemClock.elapsedRealtime() + RADIO_WAIT_TIMEOUT_MS);
+    }
+
+    /**
+     * Holds off until the background sync has let go of the radio.
+     *
+     * The keychain accepts one connection, and the service's teardown finishes
+     * after its close() call returns. Connecting inside that window produced a
+     * link that came up and immediately dropped again.
+     */
+    private void waitForRadio(long deadlineMs) {
+        if (stopped) {
+            return;
+        }
+        if (KeychainSyncService.isRadioSettled(RADIO_SETTLE_MS) ||
+            SystemClock.elapsedRealtime() >= deadlineMs) {
+            beginScan();
+            return;
+        }
+        log("Waiting for background sync to release the radio");
+        handler.postDelayed(() -> waitForRadio(deadlineMs), 100L);
+    }
+
+    private void beginScan() {
         BluetoothManager manager =
                 context.getSystemService(BluetoothManager.class);
         BluetoothAdapter adapter =
@@ -218,13 +275,35 @@ final class KeychainDrawSession {
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .build();
         scanning = true;
-        log("Looking for the keychain");
+        log(everReady ? "Reconnecting" : "Looking for the keychain");
         scanner.startScan(null, settings, scanCallback);
         handler.postDelayed(scanTimeout, SCAN_TIMEOUT_MS);
     }
 
+    /**
+     * A setback rather than the end: drop this attempt and start another.
+     * Backs off so a keychain that is off, or busy playing Breakout with its
+     * radio down, is not scanned for continuously.
+     */
+    private void retry(String reason) {
+        if (stopped || retryPending) {
+            return;
+        }
+
+        retryPending = true;
+        releaseConnection();
+        final long delay = Math.min(RETRY_MAX_MS,
+                                    RETRY_BASE_MS * (1L << Math.min(attempt, 3)));
+        ++attempt;
+        log(reason + " - retrying");
+        handler.postDelayed(() -> {
+            retryPending = false;
+            start();
+        }, delay);
+    }
+
     boolean isReady() {
-        return ready && !closed;
+        return ready && !stopped;
     }
 
     /** Largest number of points one packet can carry, after the opcode. */
@@ -254,7 +333,7 @@ final class KeychainDrawSession {
     }
 
     void stop() {
-        if (closed) {
+        if (stopped) {
             return;
         }
         if (ready && commandCharacteristic != null && gatt != null) {
@@ -287,7 +366,7 @@ final class KeychainDrawSession {
 
     private void drainQueue() {
         if (writeInFlight || pending.isEmpty() || gatt == null ||
-            drawCharacteristic == null || closed) {
+            drawCharacteristic == null || stopped) {
             return;
         }
 
@@ -327,12 +406,23 @@ final class KeychainDrawSession {
         }
     }
 
+    /** For good. Nothing here is retried afterwards. */
     private void close(String reason) {
-        if (closed) {
+        if (stopped) {
             return;
         }
-        closed = true;
+        stopped = true;
+        releaseConnection();
+        listener.onClosed(reason != null ? reason : "Drawing pad closed");
+    }
+
+    /** Tears down one attempt, leaving the session able to make another. */
+    private void releaseConnection() {
         ready = false;
+        writeInFlight = false;
+        payloadLimit = FALLBACK_PAYLOAD;
+        commandCharacteristic = null;
+        drawCharacteristic = null;
         handler.removeCallbacks(scanTimeout);
         stopScan();
         pending.clear();
@@ -341,12 +431,6 @@ final class KeychainDrawSession {
             gatt.disconnect();
             gatt.close();
             gatt = null;
-        }
-
-        if (reason != null) {
-            listener.onClosed(reason);
-        } else {
-            listener.onClosed("Drawing pad closed");
         }
     }
 

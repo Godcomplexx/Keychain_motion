@@ -51,10 +51,33 @@ public class KeychainSyncService extends Service {
      */
     private enum PendingRequest { NONE, START_GAME, SHOW_TIME }
 
+    /*
+     * Same process as the activities, so a flag carries this. The drawing pad
+     * needs to know when the service has actually let go of the radio, not
+     * merely that it has been told to: BluetoothGatt.close() returns before the
+     * stack has torn the link down, and a connection opened inside that window
+     * is dropped along with it. Hence a release timestamp as well as a flag.
+     */
+    private static volatile boolean radioInUse;
+    private static volatile long radioReleasedAtMs;
+
     private boolean paused;
     private PendingRequest pendingRequest = PendingRequest.NONE;
     private boolean requestAttemptActive;
     private long requestDeadlineMs;
+
+    /** True once the service is off the radio and the stack has settled. */
+    static boolean isRadioSettled(long settleMs) {
+        return !radioInUse &&
+               SystemClock.elapsedRealtime() - radioReleasedAtMs >= settleMs;
+    }
+
+    private static void markRadioInUse(boolean inUse) {
+        radioInUse = inUse;
+        if (!inUse) {
+            radioReleasedAtMs = SystemClock.elapsedRealtime();
+        }
+    }
 
     private final Runnable startNextScan = new Runnable() {
         @Override
@@ -64,6 +87,7 @@ public class KeychainSyncService extends Service {
             }
 
             if (bleSync != null && !bleSync.isRunning()) {
+                markRadioInUse(true);
                 if (pendingRequest != PendingRequest.NONE &&
                     SystemClock.elapsedRealtime() < requestDeadlineMs) {
                     requestAttemptActive = true;
@@ -94,6 +118,7 @@ public class KeychainSyncService extends Service {
 
             @Override
             public void onFinished(boolean success) {
+                markRadioInUse(false);
                 boolean completedRequest = requestAttemptActive;
                 PendingRequest attempted = pendingRequest;
                 requestAttemptActive = false;
@@ -147,6 +172,7 @@ public class KeychainSyncService extends Service {
             if (bleSync != null) {
                 bleSync.cancel();
             }
+            markRadioInUse(false);
             updateNotification("Paused while the drawing pad is open");
             return START_STICKY;
         }
@@ -219,6 +245,7 @@ public class KeychainSyncService extends Service {
 
     private void cleanupAutoSync() {
         autoSyncRunning = false;
+        markRadioInUse(false);
         paused = false;
         pendingRequest = PendingRequest.NONE;
         requestAttemptActive = false;

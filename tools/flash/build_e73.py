@@ -18,7 +18,6 @@ import argparse
 import os
 import shutil
 import subprocess
-import sys
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 PORT_DIR = os.path.join(REPO_ROOT, "xiao_nrf52840")
