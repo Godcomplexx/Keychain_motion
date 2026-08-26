@@ -1,0 +1,10 @@
+# The scripts here are utilities, not a package: 79 columns keeps them
+# readable side by side with the C they drive.
+line-length = 79
+
+[lint]
+select = ["E", "F", "W"]
+# The formatter owns line length. What it leaves over the limit is string
+# literals and comments, which it cannot split - and hand-wrapping those to
+# save a character or two costs more readability than the overflow does.
+ignore = ["E501"]

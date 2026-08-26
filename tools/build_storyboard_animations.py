@@ -26,20 +26,104 @@ class AnimationSpec:
 
 # The boxes follow the nine visible rows in the supplied 1136 x 1385 image.
 ANIMATIONS = (
-    AnimationSpec("01_idle", (22, 180), ((25, 160), (173, 303), (315, 445), (458, 590), (603, 732)), 350),
-    AnimationSpec("02_run_right", (195, 343), ((25, 154), (160, 292), (298, 430), (444, 570), (585, 712), (725, 852)), 160),
-    AnimationSpec("03_run_left", (358, 500), ((40, 162), (183, 310), (325, 452), (466, 594), (610, 734), (751, 877)), 160),
-    AnimationSpec("04_wave", (519, 669), ((22, 151), (166, 300), (312, 443), (456, 586)), 240),
-    AnimationSpec("05_jump", (677, 823), ((28, 148), (174, 302), (317, 447), (463, 580), (604, 720)), 200),
+    AnimationSpec(
+        "01_idle",
+        (22, 180),
+        ((25, 160), (173, 303), (315, 445), (458, 590), (603, 732)),
+        350,
+    ),
+    AnimationSpec(
+        "02_run_right",
+        (195, 343),
+        (
+            (25, 154),
+            (160, 292),
+            (298, 430),
+            (444, 570),
+            (585, 712),
+            (725, 852),
+        ),
+        160,
+    ),
+    AnimationSpec(
+        "03_run_left",
+        (358, 500),
+        (
+            (40, 162),
+            (183, 310),
+            (325, 452),
+            (466, 594),
+            (610, 734),
+            (751, 877),
+        ),
+        160,
+    ),
+    AnimationSpec(
+        "04_wave",
+        (519, 669),
+        ((22, 151), (166, 300), (312, 443), (456, 586)),
+        240,
+    ),
+    AnimationSpec(
+        "05_jump",
+        (677, 823),
+        ((28, 148), (174, 302), (317, 447), (463, 580), (604, 720)),
+        200,
+    ),
     AnimationSpec(
         "06_board_reaction",
         (841, 970),
-        ((30, 145), (184, 300), (326, 460), (475, 628), (629, 735), (748, 864), (876, 990), (1005, 1120)),
+        (
+            (30, 145),
+            (184, 300),
+            (326, 460),
+            (475, 628),
+            (629, 735),
+            (748, 864),
+            (876, 990),
+            (1005, 1120),
+        ),
         260,
     ),
-    AnimationSpec("07_board_work", (983, 1105), ((28, 145), (181, 300), (329, 443), (471, 586), (617, 740), (754, 875)), 260),
-    AnimationSpec("08_soldering", (1118, 1239), ((19, 151), (177, 308), (318, 449), (465, 594), (610, 738), (746, 877)), 220),
-    AnimationSpec("09_inspection", (1250, 1368), ((29, 143), (184, 298), (328, 441), (470, 581), (618, 731), (756, 885)), 260),
+    AnimationSpec(
+        "07_board_work",
+        (983, 1105),
+        (
+            (28, 145),
+            (181, 300),
+            (329, 443),
+            (471, 586),
+            (617, 740),
+            (754, 875),
+        ),
+        260,
+    ),
+    AnimationSpec(
+        "08_soldering",
+        (1118, 1239),
+        (
+            (19, 151),
+            (177, 308),
+            (318, 449),
+            (465, 594),
+            (610, 738),
+            (746, 877),
+        ),
+        220,
+    ),
+    AnimationSpec(
+        "09_inspection",
+        (1250, 1368),
+        (
+            (29, 143),
+            (184, 298),
+            (328, 441),
+            (470, 581),
+            (618, 731),
+            (756, 885),
+        ),
+        260,
+    ),
 )
 
 
@@ -56,7 +140,10 @@ def remove_checkerboard(frame: Image.Image) -> Image.Image:
         # The original checkerboard is bright and almost neutral.
         # Keep pale green/white goggle pixels; the baked checkerboard itself is
         # brighter and much more neutral than the translucent plastic.
-        return min(red, green, blue) > 238 and max(red, green, blue) - min(red, green, blue) < 10
+        return (
+            min(red, green, blue) > 238
+            and max(red, green, blue) - min(red, green, blue) < 10
+        )
 
     def add_if_background(x: int, y: int) -> None:
         index = y * rgba.width + x
@@ -114,7 +201,10 @@ def remove_small_neutral_islands(frame: Image.Image) -> Image.Image:
                 for neighbor_y in range(max(0, y - 1), min(height, y + 2)):
                     for neighbor_x in range(max(0, x - 1), min(width, x + 2)):
                         neighbor_index = neighbor_y * width + neighbor_x
-                        if not visited[neighbor_index] and pixels[neighbor_x, neighbor_y][3] > 0:
+                        if (
+                            not visited[neighbor_index]
+                            and pixels[neighbor_x, neighbor_y][3] > 0
+                        ):
                             visited[neighbor_index] = 1
                             queue.append((neighbor_x, neighbor_y))
 
@@ -170,7 +260,12 @@ def body_anchor_x(frame: Image.Image) -> int:
     for y in range(scan_height):
         for x in range(frame.width):
             red, green, blue, alpha = frame.getpixel((x, y))
-            if alpha > 0 and green - red > 18 and green - blue > 7 and green > 75:
+            if (
+                alpha > 0
+                and green - red > 18
+                and green - blue > 7
+                and green > 75
+            ):
                 body_x.append(x)
     return (min(body_x) + max(body_x)) // 2 if body_x else frame.width // 2
 
@@ -202,19 +297,27 @@ def align_frames(frames: list[Image.Image]) -> list[Image.Image]:
     return aligned
 
 
-def save_gif(frames: list[Image.Image], destination: Path, duration_ms: int) -> None:
+def save_gif(
+    frames: list[Image.Image], destination: Path, duration_ms: int
+) -> None:
     """Save a looping GIF with a shared palette and reserved transparent index."""
 
-    palette_source = Image.new("RGB", (frames[0].width, frames[0].height * len(frames)))
+    palette_source = Image.new(
+        "RGB", (frames[0].width, frames[0].height * len(frames))
+    )
     for index, frame in enumerate(frames):
         white = Image.new("RGB", frame.size, "white")
         white.paste(frame, (0, 0), frame)
         palette_source.paste(white, (0, index * frame.height))
-    palette = palette_source.quantize(colors=255, method=Image.Quantize.MEDIANCUT)
+    palette = palette_source.quantize(
+        colors=255, method=Image.Quantize.MEDIANCUT
+    )
     paletted: list[Image.Image] = []
     for frame in frames:
         # Avoid animated edge grain; a stable palette looks cleaner frame to frame.
-        indexed = frame.convert("RGB").quantize(palette=palette, dither=Image.Dither.NONE)
+        indexed = frame.convert("RGB").quantize(
+            palette=palette, dither=Image.Dither.NONE
+        )
         indexed_palette = indexed.getpalette()
         # White is a safe fallback for viewers that ignore GIF transparency.
         indexed_palette[255 * 3 : 255 * 3 + 3] = [255, 255, 255]
@@ -239,14 +342,23 @@ def save_gif(frames: list[Image.Image], destination: Path, duration_ms: int) -> 
     )
 
 
-def build_preview(all_frames: list[tuple[AnimationSpec, list[Image.Image]]], destination: Path) -> None:
+def build_preview(
+    all_frames: list[tuple[AnimationSpec, list[Image.Image]]],
+    destination: Path,
+) -> None:
     """Create one 3 x 3 animated overview for quick visual checking."""
 
-    tile_width = max(frame.width for _, frames in all_frames for frame in frames) + 20
-    tile_height = max(frame.height for _, frames in all_frames for frame in frames) + 34
+    tile_width = (
+        max(frame.width for _, frames in all_frames for frame in frames) + 20
+    )
+    tile_height = (
+        max(frame.height for _, frames in all_frames for frame in frames) + 34
+    )
     preview_frames: list[Image.Image] = []
     for tick in range(8):
-        sheet = Image.new("RGBA", (tile_width * 3, tile_height * 3), (238, 242, 245, 255))
+        sheet = Image.new(
+            "RGBA", (tile_width * 3, tile_height * 3), (238, 242, 245, 255)
+        )
         draw = ImageDraw.Draw(sheet)
         for index, (spec, frames) in enumerate(all_frames):
             frame = frames[tick % len(frames)]
@@ -254,18 +366,33 @@ def build_preview(all_frames: list[tuple[AnimationSpec, list[Image.Image]]], des
             x = column * tile_width + (tile_width - frame.width) // 2
             y = row * tile_height + 22
             sheet.paste(frame, (x, y), frame)
-            draw.text((column * tile_width + 7, row * tile_height + 5), spec.name, fill=(25, 40, 55))
+            draw.text(
+                (column * tile_width + 7, row * tile_height + 5),
+                spec.name,
+                fill=(25, 40, 55),
+            )
         preview_frames.append(sheet)
     save_gif(preview_frames, destination, 150)
 
 
-def build_contact_sheet(all_frames: list[tuple[AnimationSpec, list[Image.Image]]], destination: Path) -> None:
+def build_contact_sheet(
+    all_frames: list[tuple[AnimationSpec, list[Image.Image]]],
+    destination: Path,
+) -> None:
     """Lay out every extracted frame so cropping mistakes are easy to spot."""
 
-    tile_width = max(frame.width for _, frames in all_frames for frame in frames) + 8
-    tile_height = max(frame.height for _, frames in all_frames for frame in frames) + 28
+    tile_width = (
+        max(frame.width for _, frames in all_frames for frame in frames) + 8
+    )
+    tile_height = (
+        max(frame.height for _, frames in all_frames for frame in frames) + 28
+    )
     max_frame_count = max(len(frames) for _, frames in all_frames)
-    sheet = Image.new("RGB", (tile_width * max_frame_count, tile_height * len(all_frames)), (27, 32, 43))
+    sheet = Image.new(
+        "RGB",
+        (tile_width * max_frame_count, tile_height * len(all_frames)),
+        (27, 32, 43),
+    )
     draw = ImageDraw.Draw(sheet)
     for row, (spec, frames) in enumerate(all_frames):
         draw.text((6, row * tile_height + 5), spec.name, fill=(235, 240, 245))
@@ -276,7 +403,10 @@ def build_contact_sheet(all_frames: list[tuple[AnimationSpec, list[Image.Image]]
     sheet.save(destination)
 
 
-def build_outline_preview(all_frames: list[tuple[AnimationSpec, list[Image.Image]]], destination: Path) -> None:
+def build_outline_preview(
+    all_frames: list[tuple[AnimationSpec, list[Image.Image]]],
+    destination: Path,
+) -> None:
     """Show the first encoded GIF frame on a dark edge-check background."""
 
     encoded_frames: list[tuple[AnimationSpec, Image.Image]] = []
@@ -293,19 +423,29 @@ def build_outline_preview(all_frames: list[tuple[AnimationSpec, list[Image.Image
         x = column * tile_width + (tile_width - frame.width) // 2
         y = row * tile_height + 22
         sheet.paste(frame, (x, y), frame)
-        draw.text((column * tile_width + 7, row * tile_height + 5), spec.name, fill=(235, 240, 245))
+        draw.text(
+            (column * tile_width + 7, row * tile_height + 5),
+            spec.name,
+            fill=(235, 240, 245),
+        )
     sheet.save(destination)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("source", type=Path, help="Path to the supplied storyboard PNG")
-    parser.add_argument("--output", type=Path, default=Path("assets/animations/storyboard"))
+    parser.add_argument(
+        "source", type=Path, help="Path to the supplied storyboard PNG"
+    )
+    parser.add_argument(
+        "--output", type=Path, default=Path("assets/animations/storyboard")
+    )
     args = parser.parse_args()
 
     source = Image.open(args.source).convert("RGB")
     if source.size != (1136, 1385):
-        raise ValueError(f"Expected a 1136 x 1385 storyboard, got {source.size}")
+        raise ValueError(
+            f"Expected a 1136 x 1385 storyboard, got {source.size}"
+        )
 
     args.output.mkdir(parents=True, exist_ok=True)
     built: list[tuple[AnimationSpec, list[Image.Image]]] = []
@@ -313,7 +453,11 @@ def main() -> None:
         raw_frames = [
             add_white_outline(
                 remove_small_neutral_islands(
-                    remove_checkerboard(source.crop((x_start, spec.y_range[0], x_end, spec.y_range[1])))
+                    remove_checkerboard(
+                        source.crop(
+                            (x_start, spec.y_range[0], x_end, spec.y_range[1])
+                        )
+                    )
                 )
             )
             for x_start, x_end in spec.x_ranges

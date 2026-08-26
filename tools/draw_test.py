@@ -14,6 +14,7 @@ It also prints the discovered characteristics, which is the quickest way to see
 whether the firmware on the board is old enough to lack the drawing
 characteristic entirely.
 """
+
 import argparse
 import asyncio
 import math
@@ -42,7 +43,7 @@ async def send_stroke(client, points):
     """One stroke: the first packet puts the pen down, the rest continue it."""
     first = True
     for start in range(0, len(points), POINTS_PER_PACKET):
-        chunk = points[start:start + POINTS_PER_PACKET]
+        chunk = points[start : start + POINTS_PER_PACKET]
         payload = bytearray([OP_BEGIN if first else OP_CONTINUE])
         for x, y in chunk:
             payload += bytes([x, y])
@@ -51,17 +52,28 @@ async def send_stroke(client, points):
 
 
 def wave():
-    return [(x, max(0, min(HEIGHT - 1,
-                           int(HEIGHT / 2 + 24 * math.sin(
-                               x / WIDTH * 4 * math.pi)))))
-            for x in range(WIDTH)]
+    return [
+        (
+            x,
+            max(
+                0,
+                min(
+                    HEIGHT - 1,
+                    int(HEIGHT / 2 + 24 * math.sin(x / WIDTH * 4 * math.pi)),
+                ),
+            ),
+        )
+        for x in range(WIDTH)
+    ]
 
 
 def border():
-    return ([(x, 4) for x in range(4, WIDTH - 4)] +
-            [(WIDTH - 5, y) for y in range(4, HEIGHT - 4)] +
-            [(x, HEIGHT - 5) for x in range(WIDTH - 5, 3, -1)] +
-            [(4, y) for y in range(HEIGHT - 5, 3, -1)])
+    return (
+        [(x, 4) for x in range(4, WIDTH - 4)]
+        + [(WIDTH - 5, y) for y in range(4, HEIGHT - 4)]
+        + [(x, HEIGHT - 5) for x in range(WIDTH - 5, 3, -1)]
+        + [(4, y) for y in range(HEIGHT - 5, 3, -1)]
+    )
 
 
 async def main(hold_seconds, pen_radius):
@@ -70,31 +82,40 @@ async def main(hold_seconds, pen_radius):
         raise SystemExit(
             "%s not found. The keychain advertises whenever it is not playing "
             "Breakout, so check that it is powered and not mid-game."
-            % DEVICE_NAME)
+            % DEVICE_NAME
+        )
 
     print("found %s at %s" % (DEVICE_NAME, device.address))
     async with BleakClient(device) as client:
         has_draw = False
         for service in client.services:
             for characteristic in service.characteristics:
-                print("  %s  %s" % (characteristic.uuid,
-                                    ",".join(characteristic.properties)))
+                print(
+                    "  %s  %s"
+                    % (
+                        characteristic.uuid,
+                        ",".join(characteristic.properties),
+                    )
+                )
                 if characteristic.uuid.lower() == DRAW_UUID:
                     has_draw = True
 
         if not has_draw:
             raise SystemExit(
                 "No drawing characteristic. This firmware predates the "
-                "drawing pad; reflash with tools/flash/usb_update.py.")
+                "drawing pad; reflash with tools/flash/usb_update.py."
+            )
 
-        await client.write_gatt_char(COMMAND_UUID, b"DRAW:START",
-                                     response=True)
+        await client.write_gatt_char(
+            COMMAND_UUID, b"DRAW:START", response=True
+        )
         await asyncio.sleep(0.3)
-        await client.write_gatt_char(DRAW_UUID, bytes([OP_CLEAR]),
-                                     response=False)
-        await client.write_gatt_char(DRAW_UUID,
-                                     bytes([OP_PEN, pen_radius]),
-                                     response=False)
+        await client.write_gatt_char(
+            DRAW_UUID, bytes([OP_CLEAR]), response=False
+        )
+        await client.write_gatt_char(
+            DRAW_UUID, bytes([OP_PEN, pen_radius]), response=False
+        )
 
         await send_stroke(client, wave())
         # A second stroke, so a missing pen lift shows up as a line joining the
@@ -109,9 +130,18 @@ async def main(hold_seconds, pen_radius):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--hold", type=float, default=10.0,
-                        help="seconds to leave the pattern on screen")
-    parser.add_argument("--pen", type=int, default=1, choices=range(0, 4),
-                        help="pen radius in pixels")
+    parser.add_argument(
+        "--hold",
+        type=float,
+        default=10.0,
+        help="seconds to leave the pattern on screen",
+    )
+    parser.add_argument(
+        "--pen",
+        type=int,
+        default=1,
+        choices=range(0, 4),
+        help="pen radius in pixels",
+    )
     arguments = parser.parse_args()
     asyncio.run(main(arguments.hold, arguments.pen))

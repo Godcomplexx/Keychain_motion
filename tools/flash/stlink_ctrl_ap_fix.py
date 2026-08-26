@@ -11,6 +11,7 @@ Opening the access port before touching it is all that is missing. Importing
 this module patches the probe class in memory; the installed pyOCD is not
 modified.
 """
+
 from pyocd.probe.stlink_probe import StlinkProbe
 
 APSEL_MASK = 0xFF000000

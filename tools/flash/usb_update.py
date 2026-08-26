@@ -24,6 +24,7 @@ Both CDC ports of the application share one USB VID/PID, so they are told apart
 by USB interface number: MI_00 is the console, MI_02 is the SMP server. The
 bootloader is a different product ID entirely.
 """
+
 import argparse
 import os
 import re
@@ -34,7 +35,9 @@ import time
 import serial
 from serial.tools import list_ports
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
 PORT_DIR = os.path.join(REPO_ROOT, "xiao_nrf52840")
 
 USB_VID = 0x2886
@@ -92,8 +95,17 @@ def touch_1200_baud(port):
 
 
 def run_smpmgr(port, image, slot, confirm):
-    command = [sys.executable, "-m", "smpmgr", "--port", port,
-               "upgrade", image, "--slot", str(slot)]
+    command = [
+        sys.executable,
+        "-m",
+        "smpmgr",
+        "--port",
+        port,
+        "upgrade",
+        image,
+        "--slot",
+        str(slot),
+    ]
     if confirm:
         command.append("--confirm")
     print("running:", " ".join(command))
@@ -109,8 +121,10 @@ def update_via_application(image, confirm):
     if confirm:
         print("uploading as a confirmed image - no trial boot, no revert")
     else:
-        print("uploading to the spare slot as a test image; "
-              "the application confirms itself if it starts")
+        print(
+            "uploading to the spare slot as a test image; "
+            "the application confirms itself if it starts"
+        )
     return run_smpmgr(smp_port, image, slot=1, confirm=confirm)
 
 
@@ -122,7 +136,8 @@ def update_via_bootloader(image, wait_s):
             raise SystemExit(
                 "no keychain found on USB - check that the board's USB-C cable "
                 "is connected and that the power switch SW2 is on "
-                "(the application enumerates as two COM ports)")
+                "(the application enumerates as two COM ports)"
+            )
         print("application console on %s; requesting bootloader ..." % console)
         touch_1200_baud(console)
 
@@ -130,7 +145,8 @@ def update_via_bootloader(image, wait_s):
         if boot_port is None:
             raise SystemExit(
                 "bootloader did not appear within %.0f s - the board may have "
-                "booted the application again" % wait_s)
+                "booted the application again" % wait_s
+            )
 
     print("bootloader on", boot_port)
     print("NOTE: this route writes in place; the image cannot be reverted")
@@ -138,19 +154,34 @@ def update_via_bootloader(image, wait_s):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--build", default="build-e73-mcuboot",
-                        help="build directory under xiao_nrf52840")
-    parser.add_argument("--via-bootloader", action="store_true",
-                        help="use MCUboot serial recovery instead of the "
-                             "application; permanent, for when the application "
-                             "no longer starts")
-    parser.add_argument("--confirm", action="store_true",
-                        help="mark the image permanent up front instead of "
-                             "letting it prove itself on a trial boot")
-    parser.add_argument("--wait", type=float, default=20.0,
-                        help="seconds to wait for the bootloader port")
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--build",
+        default="build-e73-mcuboot",
+        help="build directory under xiao_nrf52840",
+    )
+    parser.add_argument(
+        "--via-bootloader",
+        action="store_true",
+        help="use MCUboot serial recovery instead of the "
+        "application; permanent, for when the application "
+        "no longer starts",
+    )
+    parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="mark the image permanent up front instead of "
+        "letting it prove itself on a trial boot",
+    )
+    parser.add_argument(
+        "--wait",
+        type=float,
+        default=20.0,
+        help="seconds to wait for the bootloader port",
+    )
     args = parser.parse_args()
 
     image = os.path.join(PORT_DIR, args.build, "zephyr", "zephyr.signed.bin")
@@ -161,8 +192,10 @@ def main():
         result = update_via_application(image, args.confirm)
         if result is not None:
             raise SystemExit(result)
-        print("no SMP port found on the application; "
-              "falling back to the bootloader route")
+        print(
+            "no SMP port found on the application; "
+            "falling back to the bootloader route"
+        )
 
     raise SystemExit(update_via_bootloader(image, args.wait))
 

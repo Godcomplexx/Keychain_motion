@@ -20,6 +20,7 @@ Two families come out of it:
 
 Re-run it after replacing the source file to regenerate everything.
 """
+
 import argparse
 import os
 
@@ -62,15 +63,22 @@ def centred(content, canvas_size, fraction):
     target = int(round(canvas_size * fraction))
     scale = target / max(content.size)
     scaled = content.resize(
-        (max(1, int(round(content.width * scale))),
-         max(1, int(round(content.height * scale)))),
-        Image.LANCZOS)
+        (
+            max(1, int(round(content.width * scale))),
+            max(1, int(round(content.height * scale))),
+        ),
+        Image.LANCZOS,
+    )
 
     canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
-    canvas.paste(scaled,
-                 ((canvas_size - scaled.width) // 2,
-                  (canvas_size - scaled.height) // 2),
-                 scaled)
+    canvas.paste(
+        scaled,
+        (
+            (canvas_size - scaled.width) // 2,
+            (canvas_size - scaled.height) // 2,
+        ),
+        scaled,
+    )
     return canvas
 
 
@@ -79,7 +87,8 @@ def rounded_square(size, radius_fraction=0.22):
     ImageDraw.Draw(plate).rounded_rectangle(
         (0, 0, size - 1, size - 1),
         radius=int(size * radius_fraction),
-        fill=BACKGROUND)
+        fill=BACKGROUND,
+    )
     return plate
 
 
@@ -94,8 +103,10 @@ def write(image, folder, name):
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, name)
     image.save(path, "PNG", optimize=True)
-    print("  %s (%dx%d)" % (os.path.relpath(path, REPO_ROOT),
-                            image.width, image.height))
+    print(
+        "  %s (%dx%d)"
+        % (os.path.relpath(path, REPO_ROOT), image.width, image.height)
+    )
 
 
 def main():
@@ -106,8 +117,11 @@ def main():
         folder = "mipmap-" + density
 
         adaptive = int(round(ADAPTIVE_BASE_DP * scale))
-        write(centred(content, adaptive, ADAPTIVE_CONTENT),
-              folder, "ic_launcher_foreground.png")
+        write(
+            centred(content, adaptive, ADAPTIVE_CONTENT),
+            folder,
+            "ic_launcher_foreground.png",
+        )
 
         legacy = int(round(LEGACY_BASE_DP * scale))
         square = rounded_square(legacy)
