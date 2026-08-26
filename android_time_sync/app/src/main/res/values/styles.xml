@@ -1,8 +1,12 @@
 <resources>
-    <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#006C67</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:navigationBarColor">#F7F7F3</item>
+    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+        <!-- The panel supplies its own surface, so the window behind it is the
+             dark backdrop it floats on. -->
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:colorAccent">#D8402F</item>
+        <item name="android:windowBackground">#201F1B</item>
+        <item name="android:statusBarColor">#201F1B</item>
+        <item name="android:navigationBarColor">#201F1B</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>

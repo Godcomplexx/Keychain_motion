@@ -6,10 +6,12 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.SeekBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 /**
@@ -67,78 +69,71 @@ public final class DrawActivity extends Activity
         super.onDestroy();
     }
 
-    private LinearLayout createLayout() {
-        int padding = dp(16);
+    private View createLayout() {
+        ScrollView page = new ScrollView(this);
+        page.setBackgroundColor(RetroUi.BACKDROP);
+        page.setClipToPadding(false);
+        RetroUi.insetForSystemBars(page, RetroUi.dp(this, 14));
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(padding, padding, padding, padding);
-        root.setBackgroundColor(0xFF13201F);
+        LinearLayout panel = RetroUi.panel(this);
+        panel.addView(RetroUi.titleBar(this, "Draw pad",
+                                       RetroUi.closeButton(this, this::finish)));
+        panel.addView(RetroUi.rule(this));
 
-        TextView title = new TextView(this);
-        title.setText("Draw pad");
-        title.setTextSize(24);
-        title.setTextColor(0xFFF7F7F3);
-        root.addView(title, new LinearLayout.LayoutParams(
+        panel.addView(RetroUi.sectionLabel(this, "Link"));
+        statusText = RetroUi.body(this, "", 13, RetroUi.INK);
+        panel.addView(statusText, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        statusText = new TextView(this);
-        statusText.setTextSize(15);
-        statusText.setTextColor(0xFF9FB3B1);
-        statusText.setPadding(0, dp(6), 0, dp(12));
-        root.addView(statusText, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
+        panel.addView(RetroUi.sectionLabel(this, "Canvas"));
         drawView = new DrawView(this);
         drawView.setListener(this);
         drawView.setPenRadius(0);
-        root.addView(drawView, new LinearLayout.LayoutParams(
+
+        /* The canvas sits in its own recessed frame, like the preview pane in
+         * the reference, so it reads as the keychain's screen rather than as
+         * part of the panel. */
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackground(RetroUi.wellBackground(this, RetroUi.SCREEN));
+        final int inset = RetroUi.dp(this, 4);
+        frame.setPadding(inset, inset, inset, inset);
+        frame.addView(drawView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        panel.addView(frame, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView penLabel = new TextView(this);
-        penLabel.setText("Pen size");
-        penLabel.setTextSize(15);
-        penLabel.setTextColor(0xFF9FB3B1);
-        penLabel.setPadding(0, dp(16), 0, 0);
-        root.addView(penLabel, new LinearLayout.LayoutParams(
+        TextView caption = RetroUi.body(
+                this,
+                DrawView.CANVAS_WIDTH + " x " + DrawView.CANVAS_HEIGHT
+                        + "  ·  LIVE MIRROR",
+                10, RetroUi.MUTED);
+        caption.setLetterSpacing(0.18f);
+        caption.setGravity(Gravity.CENTER);
+        caption.setPadding(0, RetroUi.dp(this, 6), 0, 0);
+        panel.addView(caption, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        SeekBar penSize = new SeekBar(this);
-        penSize.setMax(DrawView.PEN_RADIUS_MAX);
-        penSize.setProgress(0);
-        penSize.setOnSeekBarChangeListener(
-                new SeekBar.OnSeekBarChangeListener() {
-                    @Override
-                    public void onProgressChanged(SeekBar bar, int progress,
-                                                  boolean fromUser) {
-                        drawView.setPenRadius(progress);
-                        if (session != null && session.isReady()) {
-                            /* Pen size must land before the next stroke, so
-                             * anything already buffered goes out first. */
-                            flushBuffer();
-                            session.sendPenRadius(progress);
-                        }
+        panel.addView(RetroUi.sectionLabel(this, "Pen size"));
+        /* Four discrete widths, so a row of pills says more than a slider
+         * would: you can see every choice and which one is active. */
+        panel.addView(RetroUi.segmented(
+                this, new String[] {"1PX", "3PX", "5PX", "7PX"}, 0,
+                index -> {
+                    drawView.setPenRadius(index);
+                    if (session != null && session.isReady()) {
+                        /* Pen size must land before the next stroke, so
+                         * anything already buffered goes out first. */
+                        flushBuffer();
+                        session.sendPenRadius(index);
                     }
+                }));
 
-                    @Override
-                    public void onStartTrackingTouch(SeekBar bar) {
-                    }
-
-                    @Override
-                    public void onStopTrackingTouch(SeekBar bar) {
-                    }
-                });
-        root.addView(penSize, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        Button clearButton = new Button(this);
-        clearButton.setText("Clear");
-        clearButton.setAllCaps(false);
+        panel.addView(RetroUi.sectionLabel(this, "Action"));
+        Button clearButton = RetroUi.pill(this, "Clear");
         clearButton.setOnClickListener(view -> {
             bufferedPoints = 0;
             drawView.clear();
@@ -146,30 +141,24 @@ public final class DrawActivity extends Activity
                 session.sendClear();
             }
         });
-        root.addView(clearButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(52)));
-
-        Button doneButton = new Button(this);
-        doneButton.setText("Done");
-        doneButton.setAllCaps(false);
+        Button doneButton = RetroUi.pill(this, "Done");
         doneButton.setOnClickListener(view -> finish());
-        root.addView(doneButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(52)));
+        panel.addView(RetroUi.buttonRow(this, clearButton, doneButton));
 
-        TextView hint = new TextView(this);
-        hint.setText("The picture stays on the keychain until you clear it or "
-                     + "close the pad.");
-        hint.setTextSize(13);
-        hint.setTextColor(0xFF6E8482);
-        hint.setGravity(Gravity.START);
-        hint.setPadding(0, dp(12), 0, 0);
-        root.addView(hint, new LinearLayout.LayoutParams(
+        TextView hint = RetroUi.body(
+                this,
+                "The picture stays on the keychain until you clear it or "
+                        + "close the pad.",
+                11, RetroUi.MUTED);
+        hint.setPadding(0, RetroUi.dp(this, 14), 0, 0);
+        panel.addView(hint, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        return root;
+        page.addView(panel, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        return page;
     }
 
     @Override

@@ -10,6 +10,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.method.ScrollingMovementMethod;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -87,82 +88,70 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
-    private LinearLayout createLayout() {
-        int padding = dp(20);
+    private View createLayout() {
+        /*
+         * A panel floating on a dark backdrop, the way the reference lays it
+         * out: title bar, then labelled groups of pills, then a recessed area
+         * for the running log.
+         */
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackgroundColor(RetroUi.BACKDROP);
+        page.setClipToPadding(false);
+        RetroUi.insetForSystemBars(page, RetroUi.dp(this, 14));
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(padding, padding, padding, padding);
-        root.setBackgroundColor(0xFFF7F7F3);
+        LinearLayout panel = RetroUi.panel(this);
 
-        TextView title = new TextView(this);
-        title.setText("Keychain Sync 0.5");
-        title.setTextSize(26);
-        title.setTextColor(0xFF13201F);
-        root.addView(title, new LinearLayout.LayoutParams(
+        TextView version = RetroUi.body(this, "V0.5", 12, RetroUi.MUTED);
+        version.setLetterSpacing(0.16f);
+        panel.addView(RetroUi.titleBar(this, "Keychain Sync", version));
+        panel.addView(RetroUi.rule(this));
+
+        panel.addView(RetroUi.sectionLabel(this, "Status"));
+        statusText = RetroUi.body(this, "", 14, RetroUi.INK);
+        panel.addView(statusText, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        statusText = new TextView(this);
-        statusText.setTextSize(16);
-        statusText.setTextColor(0xFF3D4B49);
-        statusText.setPadding(0, dp(8), 0, dp(16));
-        root.addView(statusText, new LinearLayout.LayoutParams(
+        panel.addView(RetroUi.sectionLabel(this, "Clock"));
+        syncButton = RetroUi.pill(this, "Sync now");
+        autoButton = RetroUi.pill(this, "Auto sync");
+        panel.addView(RetroUi.buttonRow(this, syncButton, autoButton));
+
+        panel.addView(RetroUi.sectionLabel(this, "On the keychain"));
+        timeButton = RetroUi.pill(this, "Show time");
+        gameButton = RetroUi.pill(this, "Breakout");
+        panel.addView(RetroUi.buttonRow(this, timeButton, gameButton));
+
+        drawButton = RetroUi.pill(this, "Draw pad");
+        LinearLayout.LayoutParams drawParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        drawParams.topMargin = RetroUi.dp(this, 8);
+        panel.addView(RetroUi.buttonRow(this, drawButton), drawParams);
 
-        syncButton = new Button(this);
-        syncButton.setText("Sync now");
-        syncButton.setAllCaps(false);
-        root.addView(syncButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(52)));
-
-        autoButton = new Button(this);
-        autoButton.setText("Start auto sync");
-        autoButton.setAllCaps(false);
-        root.addView(autoButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(52)));
-
-        timeButton = new Button(this);
-        timeButton.setText("Show time");
-        timeButton.setAllCaps(false);
-        root.addView(timeButton, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        gameButton = new Button(this);
-        gameButton.setText("Start Breakout");
-        gameButton.setAllCaps(false);
-        root.addView(gameButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(52)));
-
-        drawButton = new Button(this);
-        drawButton.setText("Draw pad");
-        drawButton.setAllCaps(false);
-        root.addView(drawButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(52)));
-
-        logText = new TextView(this);
-        logText.setTextSize(14);
-        logText.setTextColor(0xFF162321);
-        logText.setPadding(0, dp(16), 0, 0);
+        panel.addView(RetroUi.sectionLabel(this, "Log"));
+        logText = RetroUi.body(this, "", 11, RetroUi.INK);
         logText.setGravity(Gravity.START);
         logText.setMovementMethod(new ScrollingMovementMethod());
 
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.addView(logText, new ScrollView.LayoutParams(
+        ScrollView logWindow = new ScrollView(this);
+        logWindow.setBackground(
+                RetroUi.wellBackground(this, RetroUi.PANEL_SUNK));
+        final int pad = RetroUi.dp(this, 10);
+        logWindow.setPadding(pad, pad, pad, pad);
+        logWindow.addView(logText, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(scrollView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1.0f));
+        /* The log takes whatever height is left, so the panel reaches the
+         * bottom of the screen instead of floating with dead space under it. */
+        panel.addView(logWindow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f));
 
-        return root;
+        page.addView(panel, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        return page;
     }
 
     private void startManualSync() {
@@ -277,9 +266,12 @@ public class MainActivity extends Activity {
             drawButton == null) {
             return;
         }
-        autoButton.setText(autoSyncEnabled
-                ? "Stop auto sync"
-                : "Start auto sync");
+        /*
+         * A filled pill means "on", the way a chosen option is filled in the
+         * rest of the panel. It used to swap the label between Start and Stop,
+         * which made the button change width and read as a different control.
+         */
+        autoButton.setSelected(autoSyncEnabled);
         syncButton.setEnabled(!autoSyncEnabled &&
                               !manualOperationRunning);
         autoButton.setEnabled(!manualOperationRunning);
@@ -344,7 +336,8 @@ public class MainActivity extends Activity {
     }
 
     private void setStatus(String status) {
-        mainHandler.post(() -> statusText.setText("Status: " + status));
+        /* The section above it already says STATUS. */
+        mainHandler.post(() -> statusText.setText(status));
     }
 
     private void log(String message) {
