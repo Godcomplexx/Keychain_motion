@@ -42,6 +42,7 @@ static const font_5x7_glyph_t FONT_5X7_GLYPHS[] = {
     {'Y', {0x03, 0x04, 0x78, 0x04, 0x03}},
 };
 
+/* aislop-ignore-next-line ai-slop/trivial-comment -- reported against this macro, which carries no comment at all */
 #define FONT_5X7_GLYPH_COUNT \
     (sizeof(FONT_5X7_GLYPHS) / sizeof(FONT_5X7_GLYPHS[0]))
 

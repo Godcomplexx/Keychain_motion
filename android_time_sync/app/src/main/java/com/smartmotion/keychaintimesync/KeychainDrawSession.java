@@ -235,6 +235,7 @@ final class KeychainDrawSession {
         waitForRadio(SystemClock.elapsedRealtime() + RADIO_WAIT_TIMEOUT_MS);
     }
 
+    // aislop-ignore-next-line ai-slop/narrative-comment -- records a race found on hardware; without it the next reader deletes waitForRadio as pointless
     /**
      * Holds off until the background sync has let go of the radio.
      *

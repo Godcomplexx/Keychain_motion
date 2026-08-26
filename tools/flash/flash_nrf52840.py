@@ -24,6 +24,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Imported for its side effect, and it has to run before pyocd is imported.
+# aislop-ignore-next-line ai-slop/unused-import -- patches pyOCD so an ST-Link can reach Nordic's CTRL-AP; removing it breaks SWD flashing
 import stlink_ctrl_ap_fix  # noqa: E402,F401  (patches pyOCD for CTRL-AP access)
 
 from pyocd.core.helpers import ConnectHelper  # noqa: E402
