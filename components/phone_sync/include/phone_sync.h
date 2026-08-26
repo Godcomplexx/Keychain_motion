@@ -2,6 +2,7 @@
 #define PHONE_SYNC_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "device_clock.h"
@@ -27,7 +28,16 @@ typedef enum {
      * be stranger than silence.
      */
     PHONE_SYNC_COMMAND_START_FLUID,
+    /* A short note to put on the screen, sent as TEXT:<the note>. */
+    PHONE_SYNC_COMMAND_SHOW_MESSAGE,
 } phone_sync_command_t;
+
+/*
+ * What one command write can carry after the TEXT: prefix. It is also about
+ * as much as the screen can show at a size worth reading, so the transport
+ * and the display happen to agree on what "short" means.
+ */
+#define PHONE_SYNC_MESSAGE_MAX_LENGTH 26
 
 /*
  * Drawing has a characteristic of its own, written without a response. The
@@ -68,6 +78,12 @@ bool phone_sync_take_connected_event(void);
  * mid-stroke, nothing else would ever take the screen back.
  */
 bool phone_sync_is_connected(void);
+
+/*
+ * Copies the note that arrived with the last SHOW_MESSAGE command. False when
+ * none has arrived, in which case the buffer is left alone.
+ */
+bool phone_sync_get_message(char *out, size_t length);
 
 /* Takes the oldest queued drawing packet. False when the queue is empty. */
 bool phone_sync_get_draw_packet(phone_sync_draw_packet_t *packet);

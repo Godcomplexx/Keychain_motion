@@ -44,10 +44,12 @@ add_test(NAME phone_commands COMMAND test_phone_commands)
 add_executable(preview_time_screen
     preview_time_screen.c
     ../../components/time_animation/time_animation.c
+    ../../components/message_screen/message_screen.c
 )
 
 target_include_directories(preview_time_screen PRIVATE
     ../../components/time_animation/include
+    ../../components/message_screen/include
     ../../components/oled_display/include
     ../../components/oled_display
     ../../xiao_nrf52840/include

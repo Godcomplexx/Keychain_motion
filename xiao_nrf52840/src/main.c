@@ -17,6 +17,7 @@
 #include "draw_pad.h"
 #include "esp_log.h"
 #include "flip_animation.h"
+#include "message_screen.h"
 #include "motion_detector.h"
 #include "motion_state.h"
 #include "mpu6050.h"
@@ -54,6 +55,8 @@
 #define TIME_FRAME_INTERVAL_US 1000000
 /* How long the clock stays up once asked for. */
 #define TIME_STATE_DURATION_US 15000000
+/* A note gets longer than the clock: it has to be read, not just glanced at. */
+#define MESSAGE_STATE_DURATION_US 20000000
 #define SLEEP_STILLNESS_TIMEOUT_US 30000000
 #define MOTION_MOVEMENT_DELTA_THRESHOLD 80
 /*
@@ -489,6 +492,9 @@ static void apply_state_entry_actions(motion_state_t state,
     case MOTION_STATE_DRAW:
         (void)oled_display_set_contrast(OLED_ACTIVE_CONTRAST);
         break;
+    case MOTION_STATE_MESSAGE:
+        (void)oled_display_set_contrast(OLED_ACTIVE_CONTRAST);
+        break;
     default:
         break;
     }
@@ -592,6 +598,8 @@ int main(void)
     breakout_game_t game;
     draw_pad_t pad;
     draw_pad_init(&pad);
+    char message[PHONE_SYNC_MESSAGE_MAX_LENGTH + 1] = {0};
+    int64_t previous_message_frame_us = 0;
     int64_t last_draw_packet_us = 0;
 
     /* The companion behaviour engine keeps its own clock in milliseconds. */
@@ -762,6 +770,10 @@ int main(void)
                 k_sleep(K_MSEC(PHONE_SYNC_SHUTDOWN_GRACE_MS));
                 (void)phone_sync_shutdown();
             }
+            if (command == PHONE_SYNC_COMMAND_SHOW_MESSAGE) {
+                (void)phone_sync_get_message(message, sizeof(message));
+                previous_message_frame_us = 0;
+            }
             if (plan.reset_canvas) {
                 draw_pad_clear(&pad);
                 last_draw_packet_us = now_us;
@@ -835,6 +847,20 @@ int main(void)
             device_clock_set_datetime(&clock, &phone_datetime, now_us);
             pet_behavior_post(&pet, PET_EVENT_PHONE_SYNCED, now_ms);
             ESP_LOGW(TAG, "Clock synchronized from phone");
+        }
+
+        if (current_state == MOTION_STATE_MESSAGE &&
+            now_us - motion_state_entered_at_us(&state_machine) >=
+                MESSAGE_STATE_DURATION_US) {
+            const bool movement_recent = !mpu6050_is_available() ||
+                motion_detector_has_recent_movement(&detector, now_us);
+            current_state = motion_state_handle_event(
+                &state_machine, MOTION_EVENT_MESSAGE_TIMEOUT,
+                movement_recent, now_us);
+            apply_state_entry_actions(current_state, now_us,
+                                      &previous_frame_us,
+                                      &previous_sleep_frame_us,
+                                      &previous_time_frame_us);
         }
 
         if (current_state == MOTION_STATE_TIME &&
@@ -1272,6 +1298,19 @@ int main(void)
                 now_us, motion_state_entered_at_us(&state_machine),
                 &previous_time_frame_us, &clock);
             log_render_error("TIME", render_err);
+            k_sleep(K_MSEC(LOW_POWER_LOOP_DELAY_MS));
+            break;
+        case MOTION_STATE_MESSAGE:
+            /* Once a second is enough: only the bar moves. */
+            if (oled_display_is_available() &&
+                now_us - previous_message_frame_us >= TIME_FRAME_INTERVAL_US) {
+                previous_message_frame_us = now_us;
+                render_err = message_screen_render(
+                    message,
+                    now_us - motion_state_entered_at_us(&state_machine),
+                    MESSAGE_STATE_DURATION_US);
+            }
+            log_render_error("MESSAGE", render_err);
             k_sleep(K_MSEC(LOW_POWER_LOOP_DELAY_MS));
             break;
         case MOTION_STATE_DRAW:

@@ -64,7 +64,9 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
 
     switch (machine->current_state) {
     case MOTION_STATE_FLUID:
-        if (event == MOTION_EVENT_GAME_REQUESTED) {
+        if (event == MOTION_EVENT_MESSAGE_REQUESTED) {
+            transition_to(machine, MOTION_STATE_MESSAGE, event, now_us);
+        } else if (event == MOTION_EVENT_GAME_REQUESTED) {
             transition_to(machine, MOTION_STATE_GAME, event, now_us);
         } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
             transition_to(machine, MOTION_STATE_DRAW, event, now_us);
@@ -76,7 +78,9 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
         break;
 
     case MOTION_STATE_SLEEP:
-        if (event == MOTION_EVENT_GAME_REQUESTED) {
+        if (event == MOTION_EVENT_MESSAGE_REQUESTED) {
+            transition_to(machine, MOTION_STATE_MESSAGE, event, now_us);
+        } else if (event == MOTION_EVENT_GAME_REQUESTED) {
             transition_to(machine, MOTION_STATE_GAME, event, now_us);
         } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
             transition_to(machine, MOTION_STATE_DRAW, event, now_us);
@@ -89,7 +93,9 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
         break;
 
     case MOTION_STATE_TIME:
-        if (event == MOTION_EVENT_GAME_REQUESTED) {
+        if (event == MOTION_EVENT_MESSAGE_REQUESTED) {
+            transition_to(machine, MOTION_STATE_MESSAGE, event, now_us);
+        } else if (event == MOTION_EVENT_GAME_REQUESTED) {
             transition_to(machine, MOTION_STATE_GAME, event, now_us);
         } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
             transition_to(machine, MOTION_STATE_DRAW, event, now_us);
@@ -108,6 +114,29 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
     case MOTION_STATE_GAME:
         if (event == MOTION_EVENT_GAME_FINISHED) {
             transition_to(machine, MOTION_STATE_FLUID, event, now_us);
+        }
+        break;
+
+    case MOTION_STATE_MESSAGE:
+        /*
+         * A note is read and then done with. Where it goes afterwards follows
+         * the same rule as the clock: back to the face if the keychain has
+         * been handled recently, back to sleep if it has not.
+         */
+        if (event == MOTION_EVENT_MESSAGE_TIMEOUT) {
+            transition_to(machine,
+                          movement_recent ? MOTION_STATE_FLUID
+                                          : MOTION_STATE_SLEEP,
+                          event, now_us);
+        } else if (event == MOTION_EVENT_MESSAGE_REQUESTED) {
+            /* A second note replaces the first and restarts its clock. */
+            machine->entered_at_us = now_us;
+        } else if (event == MOTION_EVENT_GAME_REQUESTED) {
+            transition_to(machine, MOTION_STATE_GAME, event, now_us);
+        } else if (event == MOTION_EVENT_TIME_REQUESTED) {
+            transition_to(machine, MOTION_STATE_TIME, event, now_us);
+        } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
+            transition_to(machine, MOTION_STATE_DRAW, event, now_us);
         }
         break;
 
@@ -148,6 +177,8 @@ const char *motion_state_name(motion_state_t state)
         return "GAME";
     case MOTION_STATE_DRAW:
         return "DRAW";
+    case MOTION_STATE_MESSAGE:
+        return "MESSAGE";
     default:
         return "UNKNOWN";
     }
@@ -178,6 +209,10 @@ const char *motion_event_name(motion_event_t event)
         return "DRAW_FINISHED";
     case MOTION_EVENT_WAKE_REQUESTED:
         return "WAKE_REQUESTED";
+    case MOTION_EVENT_MESSAGE_REQUESTED:
+        return "MESSAGE_REQUESTED";
+    case MOTION_EVENT_MESSAGE_TIMEOUT:
+        return "MESSAGE_TIMEOUT";
     default:
         return "UNKNOWN";
     }

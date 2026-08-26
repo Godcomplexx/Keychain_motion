@@ -19,6 +19,7 @@ target_sources(app PRIVATE
     ${KEYCHAIN_ROOT}/components/flip_animation/flip_animation.c
     ${KEYCHAIN_ROOT}/components/fluid_animation/fluid_animation.c
     ${KEYCHAIN_ROOT}/components/idle_animation/idle_animation.c
+    ${KEYCHAIN_ROOT}/components/message_screen/message_screen.c
     ${KEYCHAIN_ROOT}/components/motion_detector/motion_detector.c
     ${KEYCHAIN_ROOT}/components/motion_state/motion_state.c
     ${KEYCHAIN_ROOT}/components/phone_commands/phone_commands.c
@@ -35,6 +36,7 @@ target_include_directories(app PRIVATE
     ${KEYCHAIN_ROOT}/components/flip_animation/include
     ${KEYCHAIN_ROOT}/components/fluid_animation/include
     ${KEYCHAIN_ROOT}/components/idle_animation/include
+    ${KEYCHAIN_ROOT}/components/message_screen/include
     ${KEYCHAIN_ROOT}/components/motion_detector/include
     ${KEYCHAIN_ROOT}/components/motion_state/include
     ${KEYCHAIN_ROOT}/components/phone_commands/include

@@ -11,6 +11,8 @@ typedef enum {
     MOTION_STATE_GAME,
     /* The phone draws on the screen; the keychain is the paper. */
     MOTION_STATE_DRAW,
+    /* A short note from the phone, held long enough to read. */
+    MOTION_STATE_MESSAGE,
 } motion_state_t;
 
 typedef enum {
@@ -30,6 +32,8 @@ typedef enum {
      * have worked and would have been a lie about what happened.
      */
     MOTION_EVENT_WAKE_REQUESTED,
+    MOTION_EVENT_MESSAGE_REQUESTED,
+    MOTION_EVENT_MESSAGE_TIMEOUT,
 } motion_event_t;
 
 typedef struct {

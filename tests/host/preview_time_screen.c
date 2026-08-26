@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "oled_display.h"
+#include "message_screen.h"
 #include "time_animation.h"
 
 #include "font_5x7.h"
@@ -136,8 +137,15 @@ esp_err_t oled_display_present(void)
     return ESP_OK;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    if (argc > 1) {
+        /* Any argument is treated as a message to lay out, so the wrapping
+         * and the new glyphs can be judged on real text. */
+        return message_screen_render(argv[1], 5000000, 20000000) == ESP_OK
+                   ? 0 : 1;
+    }
+
     const time_animation_view_t view = {
         .year = 2026,
         .month = 8,

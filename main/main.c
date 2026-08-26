@@ -17,6 +17,7 @@
 #include "breakout_game.h"
 #include "device_clock.h"
 #include "draw_pad.h"
+#include "message_screen.h"
 #include "flip_animation.h"
 #include "i2c_bus.h"
 #include "idle_animation.h"
@@ -67,6 +68,8 @@
 #define MOTION_SHAKE_COUNT_REQUIRED 3
 #define MOTION_SHAKE_WINDOW_US 2500000
 #define PHONE_SYNC_WINDOW_US 60000000
+/* A note gets longer than the clock: it has to be read, not just glanced at. */
+#define MESSAGE_STATE_DURATION_US 20000000
 /* Drawing ends by itself if the phone stops sending; see the v2 note. */
 #define DRAW_IDLE_TIMEOUT_US 300000000
 #define PHONE_SYNC_SHUTDOWN_GRACE_MS 200
@@ -266,6 +269,13 @@ static esp_err_t apply_state_entry_actions(motion_state_t state,
                             TAG, "OLED draw contrast setup failed");
         break;
 
+    case MOTION_STATE_MESSAGE:
+        ESP_RETURN_ON_ERROR(oled_display_set_power(true),
+                            TAG, "OLED message power setup failed");
+        ESP_RETURN_ON_ERROR(oled_display_set_contrast(OLED_ACTIVE_CONTRAST),
+                            TAG, "OLED message contrast setup failed");
+        break;
+
     default:
         break;
     }
@@ -404,6 +414,8 @@ void app_main(void)
     breakout_game_t breakout_game;
     draw_pad_t draw_pad;
     draw_pad_init(&draw_pad);
+    char message[PHONE_SYNC_MESSAGE_MAX_LENGTH + 1] = {0};
+    int64_t previous_message_frame_us = 0;
     int64_t last_draw_packet_us = 0;
     uint8_t display_render_failure_count = 0;
     float last_tilt_x = 0.0f;
@@ -476,6 +488,10 @@ void app_main(void)
                     &motion_state, plan.event, true, current_frame_us);
                 ESP_LOGW(TAG, "Phone command: %s",
                          motion_event_name(plan.event));
+            }
+            if (phone_command == PHONE_SYNC_COMMAND_SHOW_MESSAGE) {
+                (void)phone_sync_get_message(message, sizeof(message));
+                previous_message_frame_us = 0;
             }
             if (plan.start_particles) {
                 /* v1 has no behaviour engine; the FLUID screen is the state
@@ -560,6 +576,28 @@ void app_main(void)
                 }
                 ESP_LOGW(TAG, "Draw pad closed: %s",
                          phone_gone ? "phone disconnected" : "no packets");
+            }
+        }
+
+        if (current_state == MOTION_STATE_MESSAGE &&
+            current_frame_us - motion_state_entered_at_us(&motion_state) >=
+            MESSAGE_STATE_DURATION_US) {
+            const bool movement_recent =
+                motion_detector_has_recent_movement(&motion_detector,
+                                                    current_frame_us);
+            motion_state_handle_event(&motion_state,
+                                      MOTION_EVENT_MESSAGE_TIMEOUT,
+                                      movement_recent,
+                                      current_frame_us);
+            current_state = motion_state_get(&motion_state);
+            err = apply_state_entry_actions(current_state,
+                                            current_frame_us,
+                                            &previous_frame_us,
+                                            &previous_sleep_frame_us,
+                                            &sleep_frame_index,
+                                            &previous_time_frame_us);
+            if (err != ESP_OK) {
+                break;
             }
         }
 
@@ -786,6 +824,26 @@ void app_main(void)
                     "Time",
                     err,
                     &display_render_failure_count)) {
+                continue;
+            }
+            vTaskDelay(pdMS_TO_TICKS(LOW_POWER_LOOP_DELAY_MS));
+            break;
+
+        case MOTION_STATE_MESSAGE:
+            /* Once a second is enough: only the bar moves. */
+            if (current_frame_us - previous_message_frame_us >=
+                TIME_FRAME_INTERVAL_US) {
+                previous_message_frame_us = current_frame_us;
+                err = message_screen_render(
+                    message,
+                    current_frame_us -
+                        motion_state_entered_at_us(&motion_state),
+                    MESSAGE_STATE_DURATION_US);
+            } else {
+                err = ESP_OK;
+            }
+            if (!display_render_succeeded_or_deferred(
+                    "Message", err, &display_render_failure_count)) {
                 continue;
             }
             vTaskDelay(pdMS_TO_TICKS(LOW_POWER_LOOP_DELAY_MS));

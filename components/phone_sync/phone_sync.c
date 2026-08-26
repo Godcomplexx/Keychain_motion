@@ -41,6 +41,8 @@ static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_time_chr_handle;
 static uint16_t s_draw_chr_handle;
 static device_clock_datetime_t s_pending_datetime;
+static char s_message[PHONE_SYNC_MESSAGE_MAX_LENGTH + 1];
+static bool s_has_message;
 /* Written from NimBLE host context, drained by the application loop. */
 static phone_sync_draw_packet_t s_draw_queue[PHONE_SYNC_DRAW_QUEUE_LENGTH];
 static uint8_t s_draw_head;
@@ -306,7 +308,7 @@ static int time_access(uint16_t conn_handle,
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
         const char help[] =
-            "time, TIME:SHOW, GAME:START, FLUID:START, DRAW:START/STOP";
+            "time, TIME:SHOW, TEXT:<note>, GAME:START, FLUID:START, DRAW:*";
         ESP_LOGI(TAG, "Phone read time characteristic");
         const int rc = os_mbuf_append(ctxt->om,
                                       help,
@@ -354,6 +356,19 @@ static int time_access(uint16_t conn_handle,
             s_pending_command = PHONE_SYNC_COMMAND_STOP_DRAW;
             portEXIT_CRITICAL(&s_datetime_lock);
             ESP_LOGW(TAG, "Draw pad closed");
+            return 0;
+        }
+
+        if (strncmp(text, "TEXT:", 5) == 0) {
+            portENTER_CRITICAL(&s_datetime_lock);
+            /* Anything past what the screen can hold is dropped here rather
+             * than shown cut off mid-word further down. */
+            strncpy(s_message, &text[5], PHONE_SYNC_MESSAGE_MAX_LENGTH);
+            s_message[PHONE_SYNC_MESSAGE_MAX_LENGTH] = ' ';
+            s_has_message = true;
+            s_pending_command = PHONE_SYNC_COMMAND_SHOW_MESSAGE;
+            portEXIT_CRITICAL(&s_datetime_lock);
+            ESP_LOGW(TAG, "Message received: %s", s_message);
             return 0;
         }
 
@@ -585,6 +600,23 @@ bool phone_sync_get_datetime_update(device_clock_datetime_t *datetime)
     }
     portEXIT_CRITICAL(&s_datetime_lock);
     return has_update;
+}
+
+bool phone_sync_get_message(char *out, size_t length)
+{
+    if (out == NULL || length == 0U) {
+        return false;
+    }
+
+    portENTER_CRITICAL(&s_datetime_lock);
+    const bool has_message = s_has_message;
+    if (has_message) {
+        strncpy(out, s_message, length - 1U);
+        out[length - 1U] = ' ';
+        s_has_message = false;
+    }
+    portEXIT_CRITICAL(&s_datetime_lock);
+    return has_message;
 }
 
 bool phone_sync_is_connected(void)
