@@ -35,6 +35,8 @@ final class KeychainBleSync {
         SHOW_TIME,
         /* The particle field, which has no other way in. */
         START_FLUID,
+        /* A short note for the keychain's screen. */
+        SEND_MESSAGE,
         START_GAME
     }
 
@@ -210,6 +212,16 @@ final class KeychainBleSync {
     }
 
     @SuppressLint("MissingPermission")
+    /* What one command write carries, and what the screen can show. */
+    static final int MESSAGE_MAX_LENGTH = 26;
+
+    private String pendingMessage = "";
+
+    void sendMessage(String message) {
+        pendingMessage = message == null ? "" : message;
+        startOperation(Operation.SEND_MESSAGE, false);
+    }
+
     void startFluid() {
         startOperation(Operation.START_FLUID, false);
     }
@@ -377,6 +389,13 @@ final class KeychainBleSync {
         } else if (operation == Operation.START_FLUID) {
             text = "FLUID:START";
             log("Asking the keychain to play with its particles");
+        } else if (operation == Operation.SEND_MESSAGE) {
+            String note = pendingMessage;
+            if (note.length() > MESSAGE_MAX_LENGTH) {
+                note = note.substring(0, MESSAGE_MAX_LENGTH);
+            }
+            text = "TEXT:" + note;
+            log("Sending a note to the keychain");
         } else {
             ZonedDateTime phoneTime = ZonedDateTime.now();
             LocalDateTime localPhoneTime = phoneTime.toLocalDateTime();

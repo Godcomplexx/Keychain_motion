@@ -12,6 +12,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -31,6 +32,8 @@ public class MainActivity extends Activity {
     private Button autoButton;
     private Button timeButton;
     private Button gameButton;
+    private EditText messageInput;
+    private Button sendButton;
     private Button fluidButton;
     private Button drawButton;
     private KeychainBleSync bleSync;
@@ -64,6 +67,7 @@ public class MainActivity extends Activity {
         autoButton.setOnClickListener(view -> toggleAutoSync());
         timeButton.setOnClickListener(view -> showTime());
         gameButton.setOnClickListener(view -> startBreakout());
+        sendButton.setOnClickListener(view -> sendMessage());
         fluidButton.setOnClickListener(view -> startParticles());
         drawButton.setOnClickListener(view -> openDrawPad());
         autoSyncEnabled = SyncPreferences.isAutoSyncEnabled(this);
@@ -134,6 +138,36 @@ public class MainActivity extends Activity {
         panel.addView(RetroUi.buttonRow(this, fluidButton, drawButton),
                       drawParams);
 
+        panel.addView(RetroUi.sectionLabel(this, "Note"));
+        messageInput = new EditText(this);
+        messageInput.setTypeface(RetroUi.TYPEFACE);
+        messageInput.setTextSize(14);
+        messageInput.setTextColor(RetroUi.INK);
+        messageInput.setHintTextColor(RetroUi.MUTED);
+        messageInput.setHint("Up to 26 letters");
+        messageInput.setSingleLine(true);
+        messageInput.setAllCaps(true);
+        /* The screen has no lower case, so the field does not pretend to. */
+        messageInput.setFilters(new android.text.InputFilter[] {
+                new android.text.InputFilter.LengthFilter(
+                        KeychainBleSync.MESSAGE_MAX_LENGTH),
+                new android.text.InputFilter.AllCaps(),
+        });
+        messageInput.setBackground(
+                RetroUi.wellBackground(this, RetroUi.PANEL_SUNK));
+        final int notePad = RetroUi.dp(this, 10);
+        messageInput.setPadding(notePad, notePad, notePad, notePad);
+        panel.addView(messageInput, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        sendButton = RetroUi.pill(this, "Send note");
+        LinearLayout.LayoutParams sendParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        sendParams.topMargin = RetroUi.dp(this, 8);
+        panel.addView(RetroUi.buttonRow(this, sendButton), sendParams);
+
         panel.addView(RetroUi.sectionLabel(this, "Log"));
         logText = RetroUi.body(this, "", 11, RetroUi.INK);
         logText.setGravity(Gravity.START);
@@ -172,6 +206,37 @@ public class MainActivity extends Activity {
         manualSuccessStatus = "Synced";
         setStatus("Scanning");
         bleSync.start();
+    }
+
+    private void sendMessage() {
+        if (!hasRequiredPermissions()) {
+            requestRequiredPermissions();
+            return;
+        }
+
+        final String note = messageInput.getText().toString().trim();
+        if (note.isEmpty()) {
+            setStatus("Write something first");
+            return;
+        }
+
+        setStatus("Waiting for keychain");
+        if (autoSyncEnabled) {
+            Intent intent = new Intent(this, KeychainSyncService.class);
+            intent.setAction(KeychainSyncService.ACTION_SEND_MESSAGE);
+            intent.putExtra(KeychainSyncService.EXTRA_MESSAGE, note);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
+            log("Note queued for the next BLE window");
+            return;
+        }
+
+        setBusy(true);
+        manualSuccessStatus = "Note sent";
+        bleSync.sendMessage(note);
     }
 
     private void startParticles() {
@@ -295,7 +360,8 @@ public class MainActivity extends Activity {
     private void updateAutoSyncUi() {
         if (autoButton == null || syncButton == null ||
             gameButton == null || timeButton == null ||
-            drawButton == null || fluidButton == null) {
+            drawButton == null || fluidButton == null ||
+            sendButton == null) {
             return;
         }
         /*
@@ -311,6 +377,7 @@ public class MainActivity extends Activity {
         gameButton.setEnabled(!manualOperationRunning);
         drawButton.setEnabled(!manualOperationRunning);
         fluidButton.setEnabled(!manualOperationRunning);
+        sendButton.setEnabled(!manualOperationRunning);
     }
 
     private boolean hasRequiredPermissions() {
@@ -366,6 +433,7 @@ public class MainActivity extends Activity {
             gameButton.setEnabled(!busy);
             drawButton.setEnabled(!busy);
             fluidButton.setEnabled(!busy);
+            sendButton.setEnabled(!busy);
         });
     }
 

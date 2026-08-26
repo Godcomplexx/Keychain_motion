@@ -218,6 +218,12 @@ I (keychain): pet: connecting -> charging priority=P2 bond=0
 Нужен воркспейс Zephyr 4.2 с модулями `mcuboot`, `zcbor` и `mbedtls`, плюс
 `pip install pyocd hidapi smpmgr`.
 
+Обновляться можно и по Bluetooth. Приложение держит SMP-сервер и на USB, и
+на BLE, а Nordic nRF Connect Device Manager говорит на этом протоколе:
+укажите ему `KeychainSync` и дайте тот же `zephyr.signed.bin`, что шлёт
+USB-обновлялка. Без кабеля — а это важно, когда телефон и брелок делят один
+порт.
+
 ```powershell
 # один раз, по SWD: стирание, установка MCUboot и подписанного приложения
 python tools/flash/flash_nrf52840.py bootstrap
@@ -469,8 +475,16 @@ APK появится по пути:
 android_time_sync/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-В приложении четыре кнопки: `Start auto sync`, `Show time`,
-`Start Breakout` и `Draw pad`.
+Приложение — одна панель: `Sync now` и `Auto sync` для часов, дальше
+`Show time`, `Breakout`, `Particles` и `Draw pad` для экрана брелока, поле
+короткой записки и лог того, что сделало радио.
+
+`Particles` — единственный вход в поле частиц. Жест наклона выключен, а сам
+компаньон его не выбирает: в игру наклоном нужен человек.
+
+Записка — до 26 символов: столько несёт одна командная запись и примерно
+столько читаемо помещается на экране. Кегль выбирается сам: пара слов —
+вдвое крупнее шрифта, длинная записка мельче, но целиком.
 
 ### Автоматическая синхронизация
 

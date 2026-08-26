@@ -24,6 +24,9 @@ public class KeychainSyncService extends Service {
             "com.smartmotion.keychaintimesync.SHOW_TIME";
     static final String ACTION_START_FLUID =
             "com.smartmotion.keychaintimesync.START_FLUID";
+    static final String ACTION_SEND_MESSAGE =
+            "com.smartmotion.keychaintimesync.SEND_MESSAGE";
+    static final String EXTRA_MESSAGE = "message";
     /*
      * The keychain accepts one connection at a time. While the drawing pad
      * holds it, background scanning would only fight over the radio, so the
@@ -51,7 +54,12 @@ public class KeychainSyncService extends Service {
      * exclusive, and a second flag would only make it possible for two to be
      * pending at once.
      */
-    private enum PendingRequest { NONE, START_GAME, SHOW_TIME, START_FLUID }
+    private enum PendingRequest {
+        NONE, START_GAME, SHOW_TIME, START_FLUID, SEND_MESSAGE
+    }
+
+    /* Carried alongside a queued SEND_MESSAGE until its window arrives. */
+    private String pendingMessage = "";
 
     /*
      * Same process as the activities, so a flag carries this. The drawing pad
@@ -97,6 +105,9 @@ public class KeychainSyncService extends Service {
                         bleSync.startGame();
                     } else if (pendingRequest == PendingRequest.START_FLUID) {
                         bleSync.startFluid();
+                    } else if (pendingRequest ==
+                               PendingRequest.SEND_MESSAGE) {
+                        bleSync.sendMessage(pendingMessage);
                     } else {
                         bleSync.showTime();
                     }
@@ -138,6 +149,8 @@ public class KeychainSyncService extends Service {
                             what = "clock";
                         } else if (attempted == PendingRequest.START_FLUID) {
                             what = "particles";
+                        } else if (attempted == PendingRequest.SEND_MESSAGE) {
+                            what = "note";
                         } else {
                             what = "Breakout";
                         }
@@ -203,6 +216,21 @@ public class KeychainSyncService extends Service {
             }
             startAutoSync();
             queueShowTimeRequest();
+            return START_STICKY;
+        }
+
+        if (ACTION_SEND_MESSAGE.equals(action)) {
+            if (!SyncPreferences.isAutoSyncEnabled(this)) {
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            pendingMessage = intent.getStringExtra(EXTRA_MESSAGE);
+            if (pendingMessage == null) {
+                pendingMessage = "";
+            }
+            startAutoSync();
+            queueRequest(PendingRequest.SEND_MESSAGE,
+                         "Waiting to send the note");
             return START_STICKY;
         }
 

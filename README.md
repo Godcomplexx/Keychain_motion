@@ -217,6 +217,12 @@ I (keychain): pet: connecting -> charging priority=P2 bond=0
 Requires a Zephyr 4.2 workspace with the `mcuboot`, `zcbor` and `mbedtls`
 modules, plus `pip install pyocd hidapi smpmgr`.
 
+Updates also go over Bluetooth. The application runs an SMP server on both
+USB and BLE, and Nordic's nRF Connect Device Manager speaks that protocol:
+point it at `KeychainSync` and give it the same `zephyr.signed.bin` the USB
+updater sends. No cable, which matters when the phone and the keychain are
+competing for the same USB port.
+
 ```powershell
 # one time, over SWD: erase, install MCUboot and the signed application
 python tools/flash/flash_nrf52840.py bootstrap
@@ -468,8 +474,18 @@ The APK is generated at:
 android_time_sync/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The app has four buttons: `Start auto sync`, `Show time`,
-`Start Breakout` and `Draw pad`.
+The app is one panel: `Sync now` and `Auto sync` for the clock, then
+`Show time`, `Breakout`, `Particles` and `Draw pad` for the keychain's
+screen, a field for a short note, and a log of what the radio did.
+
+`Particles` is the only way into the particle field. The tilt gesture that
+used to summon it is switched off and the companion never picks it alone,
+because a game played by tilting needs a person.
+
+A note is up to 26 characters, which is what one command write carries and
+about what the screen shows at a size worth reading. It picks its own size:
+a few words get twice the font, a longer one drops smaller rather than being
+cut off.
 
 ### Auto Sync
 
