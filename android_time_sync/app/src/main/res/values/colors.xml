@@ -1,0 +1,4 @@
+<resources>
+    <!-- The cream of the app's panels, so the icon and the interface agree. -->
+    <color name="ic_launcher_background">#EAE6D9</color>
+</resources>
