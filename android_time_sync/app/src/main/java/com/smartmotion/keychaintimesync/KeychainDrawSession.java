@@ -76,6 +76,8 @@ final class KeychainDrawSession {
     /* Until the phone and keychain agree on a larger MTU, a write may carry
      * only 20 bytes of payload. */
     private static final int FALLBACK_PAYLOAD = 20;
+    /* Roughly half a second of drawing at the flush rate. */
+    private static final int LIVE_QUEUE_LIMIT = 24;
 
     private final Context context;
     private final Listener listener;
@@ -113,115 +115,157 @@ final class KeychainDrawSession {
     private final ScanCallback scanCallback = new ScanCallback() {
         @Override
         public void onScanResult(int callbackType, ScanResult result) {
-            if (stopped || gatt != null) {
-                return;
-            }
-            String name = result.getDevice() == null
+            String scanned = result.getDevice() == null
                     ? null : result.getDevice().getName();
-            if (name == null && result.getScanRecord() != null) {
-                name = result.getScanRecord().getDeviceName();
+            if (scanned == null && result.getScanRecord() != null) {
+                scanned = result.getScanRecord().getDeviceName();
             }
-            if (!KeychainBleSync.DEVICE_NAME.equals(name)) {
+            if (!KeychainBleSync.DEVICE_NAME.equals(scanned)) {
                 return;
             }
-            log("Found the keychain, connecting");
-            stopScan();
-            gatt = result.getDevice().connectGatt(
-                    context, false, gattCallback,
-                    BluetoothDevice.TRANSPORT_LE);
+
+            final BluetoothDevice device = result.getDevice();
+            handler.post(() -> {
+                /* Several results can arrive before the scan actually stops,
+                 * so the second one must not open a second connection. */
+                if (stopped || gatt != null) {
+                    return;
+                }
+                log("Found the keychain, connecting");
+                stopScan();
+                gatt = device.connectGatt(context, false, gattCallback,
+                                          BluetoothDevice.TRANSPORT_LE);
+            });
         }
 
         @Override
         public void onScanFailed(int errorCode) {
-            retry("Scan failed: " + errorCode);
+            handler.post(() -> retry("Scan failed: " + errorCode));
         }
     };
 
     private final BluetoothGattCallback gattCallback =
             new BluetoothGattCallback() {
                 @Override
-                public void onConnectionStateChange(BluetoothGatt gatt,
+                public void onConnectionStateChange(BluetoothGatt source,
                                                     int status,
                                                     int newState) {
-                    if (newState == BluetoothProfile.STATE_CONNECTED) {
-                        log("Connected, negotiating packet size");
-                        if (!gatt.requestMtu(REQUESTED_MTU)) {
-                            gatt.discoverServices();
+                    handler.post(() -> {
+                        if (stopped || source != gatt) {
+                            return;
                         }
-                    } else if (newState ==
-                               BluetoothProfile.STATE_DISCONNECTED) {
-                        retry("Keychain disconnected");
-                    }
+                        if (newState == BluetoothProfile.STATE_CONNECTED) {
+                            log("Connected, negotiating packet size");
+                            if (!source.requestMtu(REQUESTED_MTU)) {
+                                source.discoverServices();
+                            }
+                        } else if (newState ==
+                                   BluetoothProfile.STATE_DISCONNECTED) {
+                            retry("Keychain disconnected");
+                        }
+                    });
                 }
 
                 @Override
-                public void onMtuChanged(BluetoothGatt gatt, int mtu,
+                public void onMtuChanged(BluetoothGatt source, int mtu,
                                          int status) {
-                    if (status == BluetoothGatt.GATT_SUCCESS) {
-                        /* Three bytes of the MTU are the ATT write header. */
-                        payloadLimit = Math.max(FALLBACK_PAYLOAD, mtu - 3);
-                        log("Packet size " + payloadLimit + " bytes");
-                    }
-                    gatt.discoverServices();
+                    handler.post(() -> {
+                        if (stopped || source != gatt) {
+                            return;
+                        }
+                        if (status == BluetoothGatt.GATT_SUCCESS) {
+                            /* Three of the MTU are the ATT write header. */
+                            payloadLimit = Math.max(FALLBACK_PAYLOAD, mtu - 3);
+                            log("Packet size " + payloadLimit + " bytes");
+                        }
+                        source.discoverServices();
+                    });
                 }
 
                 @Override
-                public void onServicesDiscovered(BluetoothGatt gatt,
+                public void onServicesDiscovered(BluetoothGatt source,
                                                  int status) {
-                    if (status != BluetoothGatt.GATT_SUCCESS) {
-                        retry("Service discovery failed: " + status);
-                        return;
-                    }
-
-                    BluetoothGattService service =
-                            gatt.getService(SERVICE_UUID);
-                    if (service == null) {
-                        retry("Keychain service not found");
-                        return;
-                    }
-
-                    commandCharacteristic =
-                            service.getCharacteristic(COMMAND_UUID);
-                    drawCharacteristic = service.getCharacteristic(DRAW_UUID);
-                    if (commandCharacteristic == null ||
-                        drawCharacteristic == null) {
-                        /* Not a transient fault: retrying would never help. */
-                        close("This keychain firmware has no drawing pad");
-                        return;
-                    }
-
-                    drawCharacteristic.setWriteType(
-                            BluetoothGattCharacteristic
-                                    .WRITE_TYPE_NO_RESPONSE);
-                    writeCommand("DRAW:START");
+                    handler.post(() -> onServicesReady(source, status));
                 }
 
                 @Override
                 public void onCharacteristicWrite(
-                        BluetoothGatt gatt,
+                        BluetoothGatt source,
                         BluetoothGattCharacteristic characteristic,
                         int status) {
-                    if (COMMAND_UUID.equals(characteristic.getUuid())) {
-                        if (status != BluetoothGatt.GATT_SUCCESS) {
-                            retry("Could not open the drawing pad: " + status);
-                            return;
-                        }
-                        if (!ready) {
-                            ready = true;
-                            attempt = 0;
-                            handler.removeCallbacks(scanTimeout);
-                            final boolean resumed = everReady;
-                            everReady = true;
-                            log(resumed ? "Reconnected" : "Drawing pad open");
-                            listener.onReady(resumed);
-                        }
-                        return;
-                    }
-
-                    writeInFlight = false;
-                    drainQueue();
+                    final boolean isCommand =
+                            COMMAND_UUID.equals(characteristic.getUuid());
+                    handler.post(() -> onWriteComplete(source, isCommand,
+                                                       status));
                 }
             };
+
+    /*
+     * Everything below runs on the main thread.
+     *
+     * The GATT callbacks arrive on a binder thread while the activity queues
+     * packets from the main one, and they share the pending deque, the
+     * in-flight flag and the connection itself. ArrayDeque is not thread safe,
+     * and a stale read of writeInFlight would stall the queue for good - the
+     * drawing would simply stop with no error anywhere. Marshalling every
+     * callback onto one thread removes the whole class of problem instead of
+     * sprinkling synchronisation over it.
+     */
+
+    private void onServicesReady(BluetoothGatt source, int status) {
+        if (stopped || source != gatt) {
+            return;
+        }
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+            retry("Service discovery failed: " + status);
+            return;
+        }
+
+        BluetoothGattService service = gatt.getService(SERVICE_UUID);
+        if (service == null) {
+            retry("Keychain service not found");
+            return;
+        }
+
+        commandCharacteristic = service.getCharacteristic(COMMAND_UUID);
+        drawCharacteristic = service.getCharacteristic(DRAW_UUID);
+        if (commandCharacteristic == null || drawCharacteristic == null) {
+            /* Not a transient fault: retrying would never help. */
+            close("This keychain firmware has no drawing pad");
+            return;
+        }
+
+        drawCharacteristic.setWriteType(
+                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+        writeCommand("DRAW:START");
+    }
+
+    private void onWriteComplete(BluetoothGatt source, boolean isCommand,
+                                 int status) {
+        if (stopped || source != gatt) {
+            return;
+        }
+
+        if (isCommand) {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                retry("Could not open the drawing pad: " + status);
+                return;
+            }
+            if (!ready) {
+                ready = true;
+                attempt = 0;
+                handler.removeCallbacks(scanTimeout);
+                final boolean resumed = everReady;
+                everReady = true;
+                log(resumed ? "Reconnected" : "Drawing pad open");
+                listener.onReady(resumed);
+            }
+            return;
+        }
+
+        writeInFlight = false;
+        drainQueue();
+    }
 
     KeychainDrawSession(Context context, Listener listener) {
         this.context = context.getApplicationContext();
@@ -313,6 +357,18 @@ final class KeychainDrawSession {
     }
 
     void sendPoints(boolean startsStroke, int[] coordinates, int count) {
+        sendPoints(startsStroke, coordinates, count, true);
+    }
+
+    /**
+     * @param droppable whether these points may be thrown away when the queue
+     *     backs up. True while a finger is drawing - losing the middle of a
+     *     fast stroke costs less than falling seconds behind it. False when
+     *     replaying a saved picture, where a dropped packet would leave a hole
+     *     in a drawing nobody is watching being made.
+     */
+    void sendPoints(boolean startsStroke, int[] coordinates, int count,
+                    boolean droppable) {
         if (!isReady() || count <= 0) {
             return;
         }
@@ -322,15 +378,18 @@ final class KeychainDrawSession {
         for (int index = 0; index < count * 2; ++index) {
             packet[1 + index] = (byte) coordinates[index];
         }
-        enqueue(packet);
+        enqueue(packet, droppable);
     }
 
+    /* Never droppable: these change what later points mean. A lost clear
+     * leaves the old picture underneath, a lost pen size draws the rest of the
+     * drawing at the wrong width. */
     void sendClear() {
-        enqueue(new byte[] { OP_CLEAR });
+        enqueue(new byte[] { OP_CLEAR }, false);
     }
 
     void sendPenRadius(int radius) {
-        enqueue(new byte[] { OP_PEN, (byte) radius });
+        enqueue(new byte[] { OP_PEN, (byte) radius }, false);
     }
 
     void stop() {
@@ -347,7 +406,7 @@ final class KeychainDrawSession {
         close(null);
     }
 
-    private void enqueue(byte[] packet) {
+    private void enqueue(byte[] packet, boolean droppable) {
         if (!isReady()) {
             return;
         }
@@ -358,7 +417,7 @@ final class KeychainDrawSession {
          * queue is capped so the drawing stays behind the finger by a fraction
          * of a second rather than by however long the stroke lasted.
          */
-        if (pending.size() >= 24) {
+        if (droppable && pending.size() >= LIVE_QUEUE_LIMIT) {
             pending.pollFirst();
         }
         pending.addLast(packet);

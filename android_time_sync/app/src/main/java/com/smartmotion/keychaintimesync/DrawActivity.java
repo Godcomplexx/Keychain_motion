@@ -298,7 +298,8 @@ public final class DrawActivity extends Activity
             final int take = Math.min(perPacket, count - sent);
             int[] slice = new int[take * 2];
             System.arraycopy(points, sent * 2, slice, 0, take * 2);
-            session.sendPoints(startsStroke, slice, take);
+            /* A replay must arrive whole; see sendPoints. */
+            session.sendPoints(startsStroke, slice, take, false);
             startsStroke = false;
             sent += take;
         }

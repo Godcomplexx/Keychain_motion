@@ -31,6 +31,13 @@ final class DrawView extends View {
     static final int PEN_RADIUS_MAX = 3;
 
     private final boolean[] canvas = new boolean[CANVAS_WIDTH * CANVAS_HEIGHT];
+    /*
+     * Reused rather than allocated per point. A finger produces around a
+     * hundred samples a second and this array is 32 KB, so allocating it in
+     * the touch path handed the collector three megabytes a second to clean up
+     * while the person was trying to draw a smooth line.
+     */
+    private final int[] pixels = new int[CANVAS_WIDTH * CANVAS_HEIGHT];
     private final Bitmap bitmap = Bitmap.createBitmap(
             CANVAS_WIDTH, CANVAS_HEIGHT, Bitmap.Config.ARGB_8888);
     private final Paint paint = new Paint();
@@ -202,7 +209,6 @@ final class DrawView extends View {
     }
 
     private void pushBitmap() {
-        final int[] pixels = new int[CANVAS_WIDTH * CANVAS_HEIGHT];
         for (int index = 0; index < pixels.length; ++index) {
             /* The OLED is blue-white on black; the preview says so too. */
             pixels[index] = canvas[index] ? 0xFF7FDBFF : 0xFF000000;
