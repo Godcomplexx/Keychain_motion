@@ -21,6 +21,7 @@ target_sources(app PRIVATE
     ${KEYCHAIN_ROOT}/components/idle_animation/idle_animation.c
     ${KEYCHAIN_ROOT}/components/motion_detector/motion_detector.c
     ${KEYCHAIN_ROOT}/components/motion_state/motion_state.c
+    ${KEYCHAIN_ROOT}/components/phone_commands/phone_commands.c
     ${KEYCHAIN_ROOT}/components/pet_behavior/pet_behavior.c
     ${KEYCHAIN_ROOT}/components/pet_face/pet_face.c
     ${KEYCHAIN_ROOT}/components/time_animation/time_animation.c
@@ -36,6 +37,7 @@ target_include_directories(app PRIVATE
     ${KEYCHAIN_ROOT}/components/idle_animation/include
     ${KEYCHAIN_ROOT}/components/motion_detector/include
     ${KEYCHAIN_ROOT}/components/motion_state/include
+    ${KEYCHAIN_ROOT}/components/phone_commands/include
     ${KEYCHAIN_ROOT}/components/mpu6050/include
     ${KEYCHAIN_ROOT}/components/oled_display
     ${KEYCHAIN_ROOT}/components/oled_display/include

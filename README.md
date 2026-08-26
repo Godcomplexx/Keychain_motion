@@ -150,11 +150,19 @@ app. `Start Breakout` still opens the game, and `Draw pad` turns the screen into
 a sheet of paper the phone draws on.
 
 For a button press to arrive, the keychain has to be reachable at the moment it
-is pressed, so it advertises whenever it is not playing, retrying every five
-seconds. The old rule - advertise for 60 seconds after a triple shake - meant
-every button press had to be preceded by shaking the keychain awake. Shaking
-still helps in one case: it brings the radio back immediately after a game
-instead of waiting out the retry interval.
+is pressed, so it advertises the whole time it is awake, and for two minutes
+after it falls asleep - you have just put it down, and the buttons should still
+work. A keychain left alone then goes quiet, because a thing carried in a
+pocket that broadcasts an unchanging address around the clock is a tracking
+beacon nobody asked for. Picking it up brings the radio straight back.
+
+The old rule - advertise for 60 seconds after a triple shake - meant every
+button press had to be preceded by shaking the keychain awake.
+
+The link itself asks for a 15-30 ms connection interval and a four second
+supervision timeout. Zephyr's default asks for 420 ms, which at a 45 ms
+interval tolerates nine missed connection events, and every connection died
+about a second after the peripheral requested it.
 
 ## Hardware and Updates
 
@@ -336,6 +344,7 @@ main state machine
 | `time_animation` | Clock, date, and step screen |
 | `breakout_game` | Game state, collision physics, and random levels |
 | `draw_pad` | The canvas the phone's drawing pad writes to |
+| `phone_commands` | What a command from the phone means, decided without doing it |
 | `phone_sync` | On-demand BLE GATT service |
 | `android_time_sync` | Android companion application |
 

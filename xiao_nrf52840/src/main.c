@@ -27,6 +27,7 @@
 #include "oled_display_optional.h"
 #include "pet_behavior.h"
 #include "pet_face.h"
+#include "phone_commands.h"
 #include "phone_sync.h"
 #include "time_animation.h"
 #include "usb_dfu_touch.h"
@@ -37,6 +38,18 @@
 #define STARTUP_SCREEN_DELAY_MS 1000
 #define HARDWARE_RETRY_INTERVAL_US 5000000
 #define BLE_ADVERTISING_RETRY_US 5000000
+/*
+ * How long the keychain keeps answering after it has gone to sleep.
+ *
+ * Advertising continuously is what makes the app's buttons work the moment
+ * they are pressed, but it also means a thing carried in a pocket broadcasts
+ * an unchanging address around the clock, which is a tracking beacon nobody
+ * asked for. Staying reachable for a couple of minutes after being put down
+ * keeps the buttons useful - you have just set it on the table - while a
+ * keychain left alone goes quiet. Picking it up brings the radio straight
+ * back.
+ */
+#define BLE_QUIET_AFTER_SLEEP_US 120000000
 #define MICROSECONDS_PER_SECOND 1000000.0f
 #define TIME_FRAME_INTERVAL_US 1000000
 /* How long the clock stays up once asked for. */
@@ -700,11 +713,17 @@ int main(void)
          * The phone is the one that starts things now: a button press shows the
          * clock or opens the game. That only works if the keychain can be
          * reached at the moment the button is pressed, so it advertises
-         * whenever it is not playing - slowly, to keep the radio cheap. The
-         * shake gesture used to be the only way in, which meant every button
-         * press had to be preceded by shaking the keychain awake.
+         * whenever it is awake and not playing. The shake gesture used to be
+         * the only way in, which meant every button press had to be preceded
+         * by shaking the keychain awake.
          */
-        if (phone_sync_available && current_state != MOTION_STATE_GAME &&
+        const bool radio_wanted =
+            current_state != MOTION_STATE_GAME &&
+            (current_state != MOTION_STATE_SLEEP ||
+             now_us - motion_state_entered_at_us(&state_machine) <
+                 BLE_QUIET_AFTER_SLEEP_US);
+
+        if (phone_sync_available && radio_wanted &&
             now_us - last_ble_request_us >= BLE_ADVERTISING_RETRY_US) {
             last_ble_request_us = now_us;
             if (phone_sync_request_advertising() == ESP_OK &&
@@ -717,6 +736,14 @@ int main(void)
                 ble_advertising_announced = true;
                 pet_behavior_post(&pet, PET_EVENT_PHONE_WINDOW_OPEN, now_ms);
             }
+        } else if (phone_sync_available && !radio_wanted &&
+                   ble_advertising_announced) {
+            phone_sync_stop_advertising();
+            ble_advertising_announced = false;
+            pet_behavior_post(&pet, PET_EVENT_PHONE_WINDOW_CLOSED, now_ms);
+            ESP_LOGI(TAG, "Radio quiet: %s",
+                     current_state == MOTION_STATE_GAME ? "playing"
+                                                        : "asleep");
         }
 
         if (phone_sync_available && phone_sync_take_connected_event()) {
@@ -727,40 +754,27 @@ int main(void)
         if (phone_sync_available && phone_sync_get_command(&command)) {
             const motion_state_t previous_state = current_state;
 
-            if (command == PHONE_SYNC_COMMAND_START_GAME) {
-                /* The game wants the radio off; nothing else will be sent. */
+            const phone_command_plan_t plan = phone_command_plan(command);
+
+            if (plan.shutdown_radio) {
                 ble_advertising_announced = false;
                 phone_sync_stop_advertising();
                 k_sleep(K_MSEC(PHONE_SYNC_SHUTDOWN_GRACE_MS));
                 (void)phone_sync_shutdown();
-
-                current_state = motion_state_handle_event(
-                    &state_machine, MOTION_EVENT_GAME_REQUESTED, true, now_us);
-                breakout_game_start(&game, now_us, sys_rand32_get(),
-                                    last_tilt_side);
-                ESP_LOGW(TAG, "Breakout started from phone command");
-            } else if (command == PHONE_SYNC_COMMAND_SHOW_TIME) {
-                /*
-                 * Asked for by hand. The radio stays up: the person is holding
-                 * the phone and may well press something else next.
-                 */
-                current_state = motion_state_handle_event(
-                    &state_machine, MOTION_EVENT_TIME_REQUESTED, true, now_us);
-                ESP_LOGW(TAG, "Clock shown on request");
-            } else if (command == PHONE_SYNC_COMMAND_START_DRAW) {
-                /*
-                 * The opposite of the game: the radio is the whole point, since
-                 * every stroke arrives over it.
-                 */
+            }
+            if (plan.reset_canvas) {
                 draw_pad_clear(&pad);
                 last_draw_packet_us = now_us;
+            }
+            if (plan.event != MOTION_EVENT_NONE) {
                 current_state = motion_state_handle_event(
-                    &state_machine, MOTION_EVENT_DRAW_REQUESTED, true, now_us);
-                ESP_LOGW(TAG, "Draw pad opened from phone command");
-            } else if (command == PHONE_SYNC_COMMAND_STOP_DRAW) {
-                current_state = motion_state_handle_event(
-                    &state_machine, MOTION_EVENT_DRAW_FINISHED, true, now_us);
-                ESP_LOGW(TAG, "Draw pad closed from phone command");
+                    &state_machine, plan.event, true, now_us);
+                ESP_LOGW(TAG, "Phone command: %s",
+                         motion_event_name(plan.event));
+            }
+            if (plan.start_game) {
+                breakout_game_start(&game, now_us, sys_rand32_get(),
+                                    last_tilt_side);
             }
 
             if (current_state != previous_state) {

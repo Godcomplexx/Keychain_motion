@@ -24,6 +24,7 @@
 #include "motion_state.h"
 #include "mpu6050.h"
 #include "oled_display.h"
+#include "phone_commands.h"
 #include "phone_sync.h"
 #include "time_animation.h"
 
@@ -453,8 +454,10 @@ void app_main(void)
             phone_sync_get_command(&phone_command)) {
             const motion_state_t previous_state = current_state;
 
-            if (phone_command == PHONE_SYNC_COMMAND_START_GAME) {
-                /* The game wants the radio off; nothing else will be sent. */
+            const phone_command_plan_t plan =
+                phone_command_plan(phone_command);
+
+            if (plan.shutdown_radio) {
                 phone_sync_window_active = false;
                 phone_sync_stop_advertising();
                 vTaskDelay(pdMS_TO_TICKS(PHONE_SYNC_SHUTDOWN_GRACE_MS));
@@ -463,45 +466,22 @@ void app_main(void)
                     ESP_LOGW(TAG, "BLE shutdown after command failed: %s",
                              esp_err_to_name(shutdown_err));
                 }
-
+            }
+            if (plan.reset_canvas) {
+                draw_pad_clear(&draw_pad);
+                last_draw_packet_us = current_frame_us;
+            }
+            if (plan.event != MOTION_EVENT_NONE) {
                 current_state = motion_state_handle_event(
-                    &motion_state,
-                    MOTION_EVENT_GAME_REQUESTED,
-                    true,
-                    current_frame_us);
+                    &motion_state, plan.event, true, current_frame_us);
+                ESP_LOGW(TAG, "Phone command: %s",
+                         motion_event_name(plan.event));
+            }
+            if (plan.start_game) {
                 breakout_game_start(&breakout_game,
                                     current_frame_us,
                                     esp_random(),
                                     last_tilt_x);
-                ESP_LOGW(TAG, "Breakout started from phone command");
-            } else if (phone_command == PHONE_SYNC_COMMAND_START_DRAW) {
-                /* The opposite of the game: the radio is the whole point. */
-                draw_pad_clear(&draw_pad);
-                last_draw_packet_us = current_frame_us;
-                current_state = motion_state_handle_event(
-                    &motion_state,
-                    MOTION_EVENT_DRAW_REQUESTED,
-                    true,
-                    current_frame_us);
-                ESP_LOGW(TAG, "Draw pad opened from phone command");
-            } else if (phone_command == PHONE_SYNC_COMMAND_STOP_DRAW) {
-                current_state = motion_state_handle_event(
-                    &motion_state,
-                    MOTION_EVENT_DRAW_FINISHED,
-                    true,
-                    current_frame_us);
-                ESP_LOGW(TAG, "Draw pad closed from phone command");
-            } else if (phone_command == PHONE_SYNC_COMMAND_SHOW_TIME) {
-                /*
-                 * Asked for by hand. The radio stays up: the person is holding
-                 * the phone and may well press something else next.
-                 */
-                current_state = motion_state_handle_event(
-                    &motion_state,
-                    MOTION_EVENT_TIME_REQUESTED,
-                    true,
-                    current_frame_us);
-                ESP_LOGW(TAG, "Clock shown on request");
             }
 
             if (current_state != previous_state) {

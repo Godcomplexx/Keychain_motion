@@ -15,3 +15,25 @@ target_include_directories(test_pet_behavior PRIVATE
 )
 
 add_test(NAME pet_behavior COMMAND test_pet_behavior)
+
+# The command planner is portable logic that the main loops execute rather
+# than decide, so it can be checked here instead of on a keychain with one
+# USB port. esp_err.h comes from the nRF port's compatibility shim - the same
+# one the firmware uses - rather than a stub written for the tests.
+# Only the header of motion_state is needed: the planner names event values
+# and calls none of its functions, and its implementation logs through the
+# platform's esp_log shim, which is not host code.
+add_executable(test_phone_commands
+    test_phone_commands.c
+    ../../components/phone_commands/phone_commands.c
+)
+
+target_include_directories(test_phone_commands PRIVATE
+    ../../components/phone_commands/include
+    ../../components/motion_state/include
+    ../../components/phone_sync/include
+    ../../components/device_clock/include
+    ../../xiao_nrf52840/include
+)
+
+add_test(NAME phone_commands COMMAND test_phone_commands)

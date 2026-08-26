@@ -89,75 +89,103 @@ final class KeychainBleSync {
         }
     };
 
+    /*
+     * The callbacks arrive on a binder thread and every one of them is handed
+     * straight to the main thread, so the session's state has a single owner.
+     * The drawing pad had the same shape and it cost a debugging session:
+     * unsynchronised flags read stale, and the failure looks like nothing
+     * happening at all rather than like an error.
+     */
     private final BluetoothGattCallback gattCallback =
             new BluetoothGattCallback() {
                 @Override
-                public void onConnectionStateChange(BluetoothGatt gatt,
+                public void onConnectionStateChange(BluetoothGatt source,
                                                     int status,
                                                     int newState) {
-                    if (finished) {
-                        return;
-                    }
-
-                    if (status != BluetoothGatt.GATT_SUCCESS) {
-                        log("Connection error: " + status);
-                        finish(false);
-                        return;
-                    }
-
-                    if (newState == BluetoothProfile.STATE_CONNECTED) {
-                        log("Connected, discovering services");
-                        mainHandler.postDelayed(gatt::discoverServices,
-                                250L);
-                    } else if (newState ==
-                               BluetoothProfile.STATE_DISCONNECTED) {
-                        log(writeStarted
-                                ? "Disconnected after write request"
-                                : "Disconnected before command write");
-                        finish(false);
-                    }
+                    mainHandler.post(
+                            () -> onConnectionChanged(source, status,
+                                                      newState));
                 }
 
                 @Override
-                public void onServicesDiscovered(BluetoothGatt gatt,
+                public void onServicesDiscovered(BluetoothGatt source,
                                                  int status) {
-                    if (status != BluetoothGatt.GATT_SUCCESS) {
-                        log("Service discovery failed: " + status);
-                        finish(false);
-                        return;
-                    }
-
-                    log("Services discovered: " + gatt.getServices().size());
-
-                    BluetoothGattCharacteristic characteristic =
-                            findCommandCharacteristic(gatt);
-                    if (characteristic == null) {
-                        log("Writable command characteristic not found");
-                        logDiscoveredServices(gatt);
-                        finish(false);
-                        return;
-                    }
-
-                    log("Exact command characteristic found");
-                    writePayload(gatt, characteristic);
+                    mainHandler.post(() -> onServicesReady(source, status));
                 }
 
                 @Override
                 public void onCharacteristicWrite(
-                        BluetoothGatt gatt,
+                        BluetoothGatt source,
                         BluetoothGattCharacteristic characteristic,
                         int status) {
-                    if (status == BluetoothGatt.GATT_SUCCESS) {
-                        log(operation == Operation.START_GAME
-                                ? "Game command acknowledged by Android"
-                                : "Time write acknowledged by Android");
-                        mainHandler.postDelayed(() -> finish(true), 500L);
-                    } else {
-                        log("Write failed: " + status);
-                        finish(false);
-                    }
+                    mainHandler.post(() -> onWriteComplete(status));
                 }
             };
+
+    private void onConnectionChanged(BluetoothGatt source, int status,
+                                     int newState) {
+        if (finished) {
+            return;
+        }
+
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+            log("Connection error: " + status);
+            finish(false);
+            return;
+        }
+
+        if (newState == BluetoothProfile.STATE_CONNECTED) {
+            log("Connected, discovering services");
+            mainHandler.postDelayed(source::discoverServices, 250L);
+        } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+            log(writeStarted
+                    ? "Disconnected after write request"
+                    : "Disconnected before command write");
+            finish(false);
+        }
+    }
+
+    private void onServicesReady(BluetoothGatt source, int status) {
+        if (finished) {
+            return;
+        }
+
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+            log("Service discovery failed: " + status);
+            finish(false);
+            return;
+        }
+
+        log("Services discovered: " + source.getServices().size());
+
+        BluetoothGattCharacteristic characteristic =
+                findCommandCharacteristic(source);
+        if (characteristic == null) {
+            log("Writable command characteristic not found");
+            logDiscoveredServices(source);
+            finish(false);
+            return;
+        }
+
+        log("Exact command characteristic found");
+        writePayload(source, characteristic);
+    }
+
+    private void onWriteComplete(int status) {
+        if (finished) {
+            return;
+        }
+
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            log(operation == Operation.START_GAME
+                    ? "Game command acknowledged by Android"
+                    : "Time write acknowledged by Android");
+            mainHandler.postDelayed(() -> finish(true), 500L);
+        } else {
+            log("Write failed: " + status);
+            finish(false);
+        }
+    }
 
     KeychainBleSync(Context context, Listener listener) {
         this.context = context.getApplicationContext();

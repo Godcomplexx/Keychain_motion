@@ -408,23 +408,39 @@ static int draw_access(uint16_t conn_handle,
         return BLE_ATT_ERR_UNLIKELY;
     }
 
+    /*
+     * The copy deliberately happens outside the critical section. This is a
+     * spinlock that disables interrupts on the core, and holding it for a
+     * 244-byte memcpy would delay every interrupt on the chip for no reason.
+     *
+     * It is safe because NimBLE serialises its GATT callbacks: there is only
+     * ever one writer here. The slot is not visible to the reader until the
+     * tail moves, which is the only thing the lock has to cover.
+     */
     portENTER_CRITICAL(&s_datetime_lock);
-    const uint8_t next = (uint8_t)((s_draw_tail + 1U) %
+    const uint8_t slot = s_draw_tail;
+    const uint8_t next = (uint8_t)((slot + 1U) %
                                    PHONE_SYNC_DRAW_QUEUE_LENGTH);
-    if (next == s_draw_head) {
+    const bool full = next == s_draw_head;
+    if (full) {
         /*
-         * Full. Dropping the newest packet loses the end of a stroke; dropping
-         * the oldest would lose its start and leave the rest hanging off
-         * whatever came before. Neither is good, so the queue is sized to make
-         * this rare and the count is logged when it is not.
+         * Dropping the newest packet loses the end of a stroke; dropping the
+         * oldest would lose its start and leave the rest hanging off whatever
+         * came before. Neither is good, so the queue is sized to make this
+         * rare and the count is logged when it is not.
          */
         ++s_draw_dropped;
-        portEXIT_CRITICAL(&s_datetime_lock);
+    }
+    portEXIT_CRITICAL(&s_datetime_lock);
+
+    if (full) {
         return 0;
     }
 
-    s_draw_queue[s_draw_tail].length = (uint8_t)length;
-    memcpy(s_draw_queue[s_draw_tail].data, buffer, length);
+    s_draw_queue[slot].length = (uint8_t)length;
+    memcpy(s_draw_queue[slot].data, buffer, length);
+
+    portENTER_CRITICAL(&s_datetime_lock);
     s_draw_tail = next;
     portEXIT_CRITICAL(&s_datetime_lock);
     return 0;
