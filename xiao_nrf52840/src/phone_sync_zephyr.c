@@ -233,12 +233,58 @@ BT_GATT_SERVICE_DEFINE(
                            write_draw_characteristic,
                            NULL));
 
+/*
+ * Every ATT transaction costs one connection interval, so a slow interval
+ * turns service discovery into tens of seconds of apparent hanging. Guessing
+ * at that from the outside wasted a debugging session; the numbers are printed
+ * now so the next question can be answered by reading rather than theorising.
+ */
+static void log_connection_parameters(struct bt_conn *connection,
+                                      const char *when)
+{
+    struct bt_conn_info info;
+    if (bt_conn_get_info(connection, &info) != 0 ||
+        info.type != BT_CONN_TYPE_LE) {
+        return;
+    }
+
+    /* Interval is in 1.25 ms units, supervision timeout in 10 ms units. */
+    ESP_LOGW(TAG, "Link %s: interval=%u.%02u ms latency=%u timeout=%u ms",
+             when,
+             (unsigned int)(info.le.interval * 125U / 100U),
+             (unsigned int)((info.le.interval * 125U) % 100U),
+             (unsigned int)info.le.latency,
+             (unsigned int)(info.le.timeout * 10U));
+}
+
+static void le_param_updated(struct bt_conn *connection, uint16_t interval,
+                             uint16_t latency, uint16_t timeout)
+{
+    ARG_UNUSED(interval);
+    ARG_UNUSED(latency);
+    ARG_UNUSED(timeout);
+    log_connection_parameters(connection, "updated");
+}
+
+static void att_mtu_updated(struct bt_conn *connection, uint16_t tx,
+                            uint16_t rx)
+{
+    ARG_UNUSED(connection);
+    ESP_LOGW(TAG, "ATT MTU now tx=%u rx=%u", (unsigned int)tx,
+             (unsigned int)rx);
+}
+
+static struct bt_gatt_cb s_gatt_callbacks = {
+    .att_mtu_updated = att_mtu_updated,
+};
+
 static void connected(struct bt_conn *connection, uint8_t error)
 {
     if (error != 0U) {
         ESP_LOGW(TAG, "Phone connection failed: %u", error);
         return;
     }
+    log_connection_parameters(connection, "up");
 
     k_mutex_lock(&s_state_lock, K_FOREVER);
     s_advertising = false;
@@ -268,6 +314,7 @@ static void disconnected(struct bt_conn *connection, uint8_t reason)
 BT_CONN_CB_DEFINE(connection_callbacks) = {
     .connected = connected,
     .disconnected = disconnected,
+    .le_param_updated = le_param_updated,
 };
 
 esp_err_t phone_sync_init(void)
@@ -282,6 +329,7 @@ esp_err_t phone_sync_init(void)
         return ESP_FAIL;
     }
 
+    bt_gatt_cb_register(&s_gatt_callbacks);
     s_initialized = true;
     ESP_LOGI(TAG, "Bluetooth GATT service ready; radio idle");
     return ESP_OK;
