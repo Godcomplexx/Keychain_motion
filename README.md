@@ -415,6 +415,29 @@ Hardware checklist:
 The BLE GATT protocol is identical on both firmware versions, so the same app
 drives either board.
 
+| The panel | The drawing pad |
+|---|---|
+| <img src="docs/assets/app-main.png" alt="The app's main screen: a cream panel with a hard black border, titled KEYCHAIN SYNC, holding labelled groups of outlined pill buttons and a recessed log window" width="300"> | <img src="docs/assets/app-draw.png" alt="The drawing pad: a black canvas inside the same cream panel, showing two crossing strokes drawn in pixels, above a row of pen size pills" width="300"> |
+
+Everything the app can do is one panel: the clock, the two things the keychain
+can be asked to put on screen, and a log of what the radio actually did. A
+filled pill means active, so `AUTO SYNC` above is switched on.
+
+The interface is built in code rather than in XML - see
+[RetroUi.java](android_time_sync/app/src/main/java/com/smartmotion/keychaintimesync/RetroUi.java) -
+because the whole app is, and splitting it would mean keeping a layout file and
+its Java in step for every screen.
+
+The canvas is worth a closer look: it is a 128x64 bitmap scaled up without
+smoothing, and it rasterizes strokes with the same Bresenham walk and round nib
+as the firmware. It shows the pixels the OLED will light, not a smooth
+phone-quality line that turns out chunky on arrival.
+
+The launcher icon is generated from the artwork in `docs/assets/icon-512.png` by
+[tools/make_app_icon.py](tools/make_app_icon.py), which crops to the drawing's
+own bounds and re-centres it - the source sits off-centre in its canvas, so it
+cannot be used as-is.
+
 Build from Android Studio by opening `android_time_sync`, or use:
 
 ```powershell

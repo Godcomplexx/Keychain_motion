@@ -8,7 +8,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.method.ScrollingMovementMethod;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -27,6 +26,7 @@ public class MainActivity extends Activity {
 
     private TextView statusText;
     private TextView logText;
+    private ScrollView logWindow;
     private Button syncButton;
     private Button autoButton;
     private Button timeButton;
@@ -133,9 +133,8 @@ public class MainActivity extends Activity {
         panel.addView(RetroUi.sectionLabel(this, "Log"));
         logText = RetroUi.body(this, "", 11, RetroUi.INK);
         logText.setGravity(Gravity.START);
-        logText.setMovementMethod(new ScrollingMovementMethod());
 
-        ScrollView logWindow = new ScrollView(this);
+        logWindow = new ScrollView(this);
         logWindow.setBackground(
                 RetroUi.wellBackground(this, RetroUi.PANEL_SUNK));
         final int pad = RetroUi.dp(this, 10);
