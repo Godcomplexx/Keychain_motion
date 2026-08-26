@@ -33,6 +33,8 @@ final class KeychainBleSync {
         TIME_SYNC,
         /* Asks the keychain to put the clock on screen. */
         SHOW_TIME,
+        /* The particle field, which has no other way in. */
+        START_FLUID,
         START_GAME
     }
 
@@ -208,6 +210,10 @@ final class KeychainBleSync {
     }
 
     @SuppressLint("MissingPermission")
+    void startFluid() {
+        startOperation(Operation.START_FLUID, false);
+    }
+
     void startGame() {
         startOperation(Operation.START_GAME, false);
     }
@@ -368,6 +374,9 @@ final class KeychainBleSync {
         } else if (operation == Operation.SHOW_TIME) {
             text = "TIME:SHOW";
             log("Asking the keychain to show the clock");
+        } else if (operation == Operation.START_FLUID) {
+            text = "FLUID:START";
+            log("Asking the keychain to play with its particles");
         } else {
             ZonedDateTime phoneTime = ZonedDateTime.now();
             LocalDateTime localPhoneTime = phoneTime.toLocalDateTime();

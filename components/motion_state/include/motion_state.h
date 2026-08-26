@@ -24,6 +24,12 @@ typedef enum {
     MOTION_EVENT_GAME_FINISHED,
     MOTION_EVENT_DRAW_REQUESTED,
     MOTION_EVENT_DRAW_FINISHED,
+    /*
+     * The phone asked for something that needs the resting screen, without
+     * anybody having touched the keychain. Waking on MOVEMENT_DETECTED would
+     * have worked and would have been a lie about what happened.
+     */
+    MOTION_EVENT_WAKE_REQUESTED,
 } motion_event_t;
 
 typedef struct {

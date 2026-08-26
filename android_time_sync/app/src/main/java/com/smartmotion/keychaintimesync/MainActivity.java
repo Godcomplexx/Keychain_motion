@@ -31,6 +31,7 @@ public class MainActivity extends Activity {
     private Button autoButton;
     private Button timeButton;
     private Button gameButton;
+    private Button fluidButton;
     private Button drawButton;
     private KeychainBleSync bleSync;
     private boolean autoSyncEnabled;
@@ -63,6 +64,7 @@ public class MainActivity extends Activity {
         autoButton.setOnClickListener(view -> toggleAutoSync());
         timeButton.setOnClickListener(view -> showTime());
         gameButton.setOnClickListener(view -> startBreakout());
+        fluidButton.setOnClickListener(view -> startParticles());
         drawButton.setOnClickListener(view -> openDrawPad());
         autoSyncEnabled = SyncPreferences.isAutoSyncEnabled(this);
         updateAutoSyncUi();
@@ -123,12 +125,14 @@ public class MainActivity extends Activity {
         gameButton = RetroUi.pill(this, "Breakout");
         panel.addView(RetroUi.buttonRow(this, timeButton, gameButton));
 
+        fluidButton = RetroUi.pill(this, "Particles");
         drawButton = RetroUi.pill(this, "Draw pad");
         LinearLayout.LayoutParams drawParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         drawParams.topMargin = RetroUi.dp(this, 8);
-        panel.addView(RetroUi.buttonRow(this, drawButton), drawParams);
+        panel.addView(RetroUi.buttonRow(this, fluidButton, drawButton),
+                      drawParams);
 
         panel.addView(RetroUi.sectionLabel(this, "Log"));
         logText = RetroUi.body(this, "", 11, RetroUi.INK);
@@ -168,6 +172,35 @@ public class MainActivity extends Activity {
         manualSuccessStatus = "Synced";
         setStatus("Scanning");
         bleSync.start();
+    }
+
+    private void startParticles() {
+        if (!hasRequiredPermissions()) {
+            requestRequiredPermissions();
+            return;
+        }
+
+        /*
+         * The particle field has no other way in: the tilt gesture that used
+         * to summon it is switched off, and the companion never picks it on
+         * its own because a game played by tilting needs a person.
+         */
+        setStatus("Waiting for keychain");
+        if (autoSyncEnabled) {
+            Intent intent = new Intent(this, KeychainSyncService.class);
+            intent.setAction(KeychainSyncService.ACTION_START_FLUID);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
+            log("Particles queued for the next BLE window");
+            return;
+        }
+
+        setBusy(true);
+        manualSuccessStatus = "Particles started";
+        bleSync.startFluid();
     }
 
     private void openDrawPad() {
@@ -262,7 +295,7 @@ public class MainActivity extends Activity {
     private void updateAutoSyncUi() {
         if (autoButton == null || syncButton == null ||
             gameButton == null || timeButton == null ||
-            drawButton == null) {
+            drawButton == null || fluidButton == null) {
             return;
         }
         /*
@@ -277,6 +310,7 @@ public class MainActivity extends Activity {
         timeButton.setEnabled(!manualOperationRunning);
         gameButton.setEnabled(!manualOperationRunning);
         drawButton.setEnabled(!manualOperationRunning);
+        fluidButton.setEnabled(!manualOperationRunning);
     }
 
     private boolean hasRequiredPermissions() {
@@ -331,6 +365,7 @@ public class MainActivity extends Activity {
             timeButton.setEnabled(!busy);
             gameButton.setEnabled(!busy);
             drawButton.setEnabled(!busy);
+            fluidButton.setEnabled(!busy);
         });
     }
 

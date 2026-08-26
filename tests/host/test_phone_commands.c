@@ -60,6 +60,23 @@ static bool test_clock_is_silent_about_the_radio(void)
     return true;
 }
 
+/*
+ * The particle field is the one command that reaches past the screen state
+ * machine into the companion, and the one that has to wake the resting screen
+ * to be seen at all.
+ */
+static bool test_particles_wake_the_resting_screen(void)
+{
+    const phone_command_plan_t plan =
+        phone_command_plan(PHONE_SYNC_COMMAND_START_FLUID);
+    CHECK(plan.event == MOTION_EVENT_WAKE_REQUESTED);
+    CHECK(plan.start_particles);
+    CHECK(!plan.shutdown_radio);
+    CHECK(!plan.start_game);
+    CHECK(!plan.reset_canvas);
+    return true;
+}
+
 static bool test_no_command_does_nothing(void)
 {
     const phone_command_plan_t plan =
@@ -68,6 +85,7 @@ static bool test_no_command_does_nothing(void)
     CHECK(!plan.shutdown_radio);
     CHECK(!plan.start_game);
     CHECK(!plan.reset_canvas);
+    CHECK(!plan.start_particles);
     return true;
 }
 
@@ -80,6 +98,7 @@ static bool test_only_the_game_takes_the_radio(void)
         PHONE_SYNC_COMMAND_SHOW_TIME,
         PHONE_SYNC_COMMAND_START_DRAW,
         PHONE_SYNC_COMMAND_STOP_DRAW,
+        PHONE_SYNC_COMMAND_START_FLUID,
     };
 
     int shutdowns = 0;
@@ -97,6 +116,7 @@ int main(void)
 {
     CHECK(test_game_then_draw());
     CHECK(test_clock_is_silent_about_the_radio());
+    CHECK(test_particles_wake_the_resting_screen());
     CHECK(test_no_command_does_nothing());
     CHECK(test_only_the_game_takes_the_radio());
 

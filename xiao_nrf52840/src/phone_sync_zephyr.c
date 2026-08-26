@@ -106,7 +106,7 @@ static ssize_t read_characteristic(struct bt_conn *conn,
                                    uint16_t offset)
 {
     static const char help[] =
-        "time, TIME:SHOW, GAME:START, DRAW:START or DRAW:STOP";
+        "time, TIME:SHOW, GAME:START, FLUID:START, DRAW:START/STOP";
     return bt_gatt_attr_read(conn, attr, buffer, length, offset,
                              help, sizeof(help) - 1U);
 }
@@ -154,6 +154,14 @@ static ssize_t write_characteristic(struct bt_conn *conn,
         s_pending_command = PHONE_SYNC_COMMAND_STOP_DRAW;
         k_mutex_unlock(&s_state_lock);
         ESP_LOGW(TAG, "Draw pad closed");
+        return length;
+    }
+
+    if (strcmp(text, "FLUID:START") == 0) {
+        k_mutex_lock(&s_state_lock, K_FOREVER);
+        s_pending_command = PHONE_SYNC_COMMAND_START_FLUID;
+        k_mutex_unlock(&s_state_lock);
+        ESP_LOGW(TAG, "Particle field requested");
         return length;
     }
 

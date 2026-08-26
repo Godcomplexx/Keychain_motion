@@ -82,7 +82,8 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
             transition_to(machine, MOTION_STATE_DRAW, event, now_us);
         } else if (event == MOTION_EVENT_TIME_REQUESTED) {
             transition_to(machine, MOTION_STATE_TIME, event, now_us);
-        } else if (event == MOTION_EVENT_MOVEMENT_DETECTED) {
+        } else if (event == MOTION_EVENT_MOVEMENT_DETECTED ||
+                   event == MOTION_EVENT_WAKE_REQUESTED) {
             transition_to(machine, MOTION_STATE_FLUID, event, now_us);
         }
         break;
@@ -92,6 +93,8 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
             transition_to(machine, MOTION_STATE_GAME, event, now_us);
         } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
             transition_to(machine, MOTION_STATE_DRAW, event, now_us);
+        } else if (event == MOTION_EVENT_WAKE_REQUESTED) {
+            transition_to(machine, MOTION_STATE_FLUID, event, now_us);
         } else if (event == MOTION_EVENT_TIME_TIMEOUT) {
             /* After TIME, choose the next state from recent real motion. */
             transition_to(machine,
@@ -173,6 +176,8 @@ const char *motion_event_name(motion_event_t event)
         return "DRAW_REQUESTED";
     case MOTION_EVENT_DRAW_FINISHED:
         return "DRAW_FINISHED";
+    case MOTION_EVENT_WAKE_REQUESTED:
+        return "WAKE_REQUESTED";
     default:
         return "UNKNOWN";
     }

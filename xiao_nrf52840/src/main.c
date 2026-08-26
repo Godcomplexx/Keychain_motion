@@ -772,6 +772,14 @@ int main(void)
                 ESP_LOGW(TAG, "Phone command: %s",
                          motion_event_name(plan.event));
             }
+            if (plan.start_particles) {
+                /*
+                 * The particle field is the companion's, not the screen's, so
+                 * it is asked for through the behaviour engine. The engine
+                 * runs it for thirty seconds and then goes back to the face.
+                 */
+                pet_behavior_post(&pet, PET_EVENT_PLAY_REQUESTED, now_ms);
+            }
             if (plan.start_game) {
                 breakout_game_start(&game, now_us, sys_rand32_get(),
                                     last_tilt_side);

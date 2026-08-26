@@ -306,7 +306,7 @@ static int time_access(uint16_t conn_handle,
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
         const char help[] =
-            "time, TIME:SHOW, GAME:START, DRAW:START or DRAW:STOP";
+            "time, TIME:SHOW, GAME:START, FLUID:START, DRAW:START/STOP";
         ESP_LOGI(TAG, "Phone read time characteristic");
         const int rc = os_mbuf_append(ctxt->om,
                                       help,
@@ -354,6 +354,14 @@ static int time_access(uint16_t conn_handle,
             s_pending_command = PHONE_SYNC_COMMAND_STOP_DRAW;
             portEXIT_CRITICAL(&s_datetime_lock);
             ESP_LOGW(TAG, "Draw pad closed");
+            return 0;
+        }
+
+        if (strcmp(text, "FLUID:START") == 0) {
+            portENTER_CRITICAL(&s_datetime_lock);
+            s_pending_command = PHONE_SYNC_COMMAND_START_FLUID;
+            portEXIT_CRITICAL(&s_datetime_lock);
+            ESP_LOGW(TAG, "Particle field requested");
             return 0;
         }
 

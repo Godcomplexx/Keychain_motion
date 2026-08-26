@@ -477,6 +477,11 @@ void app_main(void)
                 ESP_LOGW(TAG, "Phone command: %s",
                          motion_event_name(plan.event));
             }
+            if (plan.start_particles) {
+                /* v1 has no behaviour engine; the FLUID screen is the state
+                 * itself, and waking to it is the whole request. */
+                ESP_LOGW(TAG, "Particle field requested");
+            }
             if (plan.start_game) {
                 breakout_game_start(&breakout_game,
                                     current_frame_us,

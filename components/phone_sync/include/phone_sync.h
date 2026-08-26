@@ -20,6 +20,13 @@ typedef enum {
     /* The phone opened its drawing pad, and later closed it. */
     PHONE_SYNC_COMMAND_START_DRAW,
     PHONE_SYNC_COMMAND_STOP_DRAW,
+    /*
+     * The particle field, which the pet plays with rather than performs. It
+     * has no other way in: the tilt gesture is switched off and the activity
+     * scheduler never picks it, because a two-player game started alone would
+     * be stranger than silence.
+     */
+    PHONE_SYNC_COMMAND_START_FLUID,
 } phone_sync_command_t;
 
 /*

@@ -28,6 +28,11 @@ typedef struct {
     bool start_game;
     /* The drawing pad opens on a blank canvas rather than the last picture. */
     bool reset_canvas;
+    /*
+     * The particle field belongs to the companion rather than to the screen
+     * state machine, so it is asked for separately from the event above.
+     */
+    bool start_particles;
 } phone_command_plan_t;
 
 phone_command_plan_t phone_command_plan(phone_sync_command_t command);

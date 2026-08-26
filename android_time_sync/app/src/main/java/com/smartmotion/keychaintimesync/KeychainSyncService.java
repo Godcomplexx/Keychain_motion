@@ -22,6 +22,8 @@ public class KeychainSyncService extends Service {
             "com.smartmotion.keychaintimesync.START_GAME";
     static final String ACTION_SHOW_TIME =
             "com.smartmotion.keychaintimesync.SHOW_TIME";
+    static final String ACTION_START_FLUID =
+            "com.smartmotion.keychaintimesync.START_FLUID";
     /*
      * The keychain accepts one connection at a time. While the drawing pad
      * holds it, background scanning would only fight over the radio, so the
@@ -49,7 +51,7 @@ public class KeychainSyncService extends Service {
      * exclusive, and a second flag would only make it possible for two to be
      * pending at once.
      */
-    private enum PendingRequest { NONE, START_GAME, SHOW_TIME }
+    private enum PendingRequest { NONE, START_GAME, SHOW_TIME, START_FLUID }
 
     /*
      * Same process as the activities, so a flag carries this. The drawing pad
@@ -93,6 +95,8 @@ public class KeychainSyncService extends Service {
                     requestAttemptActive = true;
                     if (pendingRequest == PendingRequest.START_GAME) {
                         bleSync.startGame();
+                    } else if (pendingRequest == PendingRequest.START_FLUID) {
+                        bleSync.startFluid();
                     } else {
                         bleSync.showTime();
                     }
@@ -129,8 +133,14 @@ public class KeychainSyncService extends Service {
                         return;
                     }
                     if (pendingRequest != PendingRequest.NONE) {
-                        String what = attempted == PendingRequest.SHOW_TIME
-                                ? "clock" : "Breakout";
+                        final String what;
+                        if (attempted == PendingRequest.SHOW_TIME) {
+                            what = "clock";
+                        } else if (attempted == PendingRequest.START_FLUID) {
+                            what = "particles";
+                        } else {
+                            what = "Breakout";
+                        }
                         if (completedRequest && success) {
                             pendingRequest = PendingRequest.NONE;
                             updateNotification(what + " sent");
@@ -193,6 +203,17 @@ public class KeychainSyncService extends Service {
             }
             startAutoSync();
             queueShowTimeRequest();
+            return START_STICKY;
+        }
+
+        if (ACTION_START_FLUID.equals(action)) {
+            if (!SyncPreferences.isAutoSyncEnabled(this)) {
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            startAutoSync();
+            queueRequest(PendingRequest.START_FLUID,
+                         "Waiting to start the particles");
             return START_STICKY;
         }
 
