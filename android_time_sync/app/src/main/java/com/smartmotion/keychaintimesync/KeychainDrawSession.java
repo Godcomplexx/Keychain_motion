@@ -300,18 +300,25 @@ final class KeychainDrawSession {
     }
 
     private void beginScan() {
+        /*
+         * Both of these are conditions someone can undo from the quick
+         * settings while the pad is still on screen, so they are setbacks and
+         * not the end. Treating them as terminal meant a Bluetooth toggle
+         * killed the pad for good: verified by toggling it, after which the
+         * pad sat on "Bluetooth is off" and never came back.
+         */
         BluetoothManager manager =
                 context.getSystemService(BluetoothManager.class);
         BluetoothAdapter adapter =
                 manager == null ? null : manager.getAdapter();
         if (adapter == null || !adapter.isEnabled()) {
-            close("Bluetooth is off");
+            retry("Bluetooth is off");
             return;
         }
 
         scanner = adapter.getBluetoothLeScanner();
         if (scanner == null) {
-            close("No BLE scanner available");
+            retry("No BLE scanner available");
             return;
         }
 
