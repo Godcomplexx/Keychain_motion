@@ -137,6 +137,14 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
             transition_to(machine, MOTION_STATE_TIME, event, now_us);
         } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
             transition_to(machine, MOTION_STATE_DRAW, event, now_us);
+        } else if (event == MOTION_EVENT_WAKE_REQUESTED) {
+            /*
+             * Asking for the particles while a note is up has to put the face
+             * back, or the companion plays with them behind the note and the
+             * thirty seconds are over before anybody sees it. Measured: the
+             * pet entered act_fluid while the screen stayed on MESSAGE.
+             */
+            transition_to(machine, MOTION_STATE_FLUID, event, now_us);
         }
         break;
 

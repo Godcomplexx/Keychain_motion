@@ -53,6 +53,15 @@ motion_detector_result_t motion_detector_update(motion_detector_t *detector,
                                                 const mpu6050_accel_data_t *data,
                                                 int64_t now_us);
 
+/*
+ * Counts as if the keychain had just been moved, without inventing a movement
+ * event. The phone asking for the screen is a reason to keep it on: otherwise
+ * the stillness timer, which has been running the whole time nobody touched
+ * the keychain, fires on the very next tick and puts the screen back to sleep
+ * underneath whatever was asked for.
+ */
+void motion_detector_mark_active(motion_detector_t *detector, int64_t now_us);
+
 bool motion_detector_has_recent_movement(const motion_detector_t *detector,
                                          int64_t now_us);
 

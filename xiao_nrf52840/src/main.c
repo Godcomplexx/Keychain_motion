@@ -779,6 +779,13 @@ int main(void)
                 last_draw_packet_us = now_us;
             }
             if (plan.event != MOTION_EVENT_NONE) {
+                /*
+                 * A command is a reason to keep the screen on. Without this
+                 * the stillness timer - running the whole time nobody touched
+                 * the keychain - fires on the next tick and puts it back to
+                 * sleep underneath what was just asked for.
+                 */
+                motion_detector_mark_active(&detector, now_us);
                 current_state = motion_state_handle_event(
                     &state_machine, plan.event, true, now_us);
                 ESP_LOGW(TAG, "Phone command: %s",

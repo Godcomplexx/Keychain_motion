@@ -110,6 +110,15 @@ motion_detector_result_t motion_detector_update(motion_detector_t *detector,
     return result;
 }
 
+void motion_detector_mark_active(motion_detector_t *detector, int64_t now_us)
+{
+    if (detector == NULL) {
+        return;
+    }
+
+    detector->last_movement_us = now_us;
+}
+
 bool motion_detector_has_recent_movement(const motion_detector_t *detector,
                                          int64_t now_us)
 {

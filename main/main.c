@@ -484,6 +484,9 @@ void app_main(void)
                 last_draw_packet_us = current_frame_us;
             }
             if (plan.event != MOTION_EVENT_NONE) {
+                /* A command keeps the screen on; see the v2 note. */
+                motion_detector_mark_active(&motion_detector,
+                                            current_frame_us);
                 current_state = motion_state_handle_event(
                     &motion_state, plan.event, true, current_frame_us);
                 ESP_LOGW(TAG, "Phone command: %s",
