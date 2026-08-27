@@ -83,6 +83,13 @@ bool phone_sync_is_connected(void);
  * Copies the note that arrived with the last SHOW_MESSAGE command. False when
  * none has arrived, in which case the buffer is left alone.
  */
+/*
+ * Publishes the charge over the standard Battery Service. Values above 100 are
+ * ignored rather than clamped: a reading that far out is a fault worth leaving
+ * visible, not a number worth rounding.
+ */
+void phone_sync_publish_battery(uint8_t percent);
+
 bool phone_sync_get_message(char *out, size_t length);
 
 /* Takes the oldest queued drawing packet. False when the queue is empty. */

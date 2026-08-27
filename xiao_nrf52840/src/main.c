@@ -1229,6 +1229,8 @@ int main(void)
             if (battery_sample(&reading, charger_attached)) {
                 battery_percent = reading.percent;
                 battery_millivolts = reading.cell_millivolts;
+                /* Cheap: the service holds one value and notifies on change. */
+                phone_sync_publish_battery((uint8_t)reading.percent);
                 /*
                  * Only on a change: a line every ten seconds forever buries
                  * everything else. The pin figure is kept because that is what

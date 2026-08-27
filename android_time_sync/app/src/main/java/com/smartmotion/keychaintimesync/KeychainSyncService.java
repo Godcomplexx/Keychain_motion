@@ -132,6 +132,14 @@ public class KeychainSyncService extends Service {
             }
 
             @Override
+            public void onBatteryLevel(int percent) {
+                /* The background service is usually the one connecting, so
+                 * this is where most readings arrive. */
+                SyncPreferences.setBatteryLevel(
+                        KeychainSyncService.this, percent);
+            }
+
+            @Override
             public void onFinished(boolean success) {
                 markRadioInUse(false);
                 boolean completedRequest = requestAttemptActive;

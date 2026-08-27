@@ -602,6 +602,17 @@ bool phone_sync_get_datetime_update(device_clock_datetime_t *datetime)
     return has_update;
 }
 
+void phone_sync_publish_battery(uint8_t percent)
+{
+    /*
+     * Not published on this build. NimBLE here carries only the keychain's own
+     * service, and adding the standard one is a job of its own rather than a
+     * line; the v1 board is also not the one anybody is carrying. Kept so both
+     * platforms present the same header and the call sites need no guards.
+     */
+    (void)percent;
+}
+
 bool phone_sync_get_message(char *out, size_t length)
 {
     if (out == NULL || length == 0U) {

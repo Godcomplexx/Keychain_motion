@@ -26,6 +26,7 @@ public class MainActivity extends Activity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private TextView statusText;
+    private TextView batteryText;
     private TextView logText;
     private ScrollView logWindow;
     private Button syncButton;
@@ -54,6 +55,12 @@ public class MainActivity extends Activity {
             }
 
             @Override
+            public void onBatteryLevel(int percent) {
+                SyncPreferences.setBatteryLevel(MainActivity.this, percent);
+                showBattery();
+            }
+
+            @Override
             public void onFinished(boolean success) {
                 setBusy(false);
                 setStatus(success
@@ -70,6 +77,7 @@ public class MainActivity extends Activity {
         sendButton.setOnClickListener(view -> sendMessage());
         fluidButton.setOnClickListener(view -> startParticles());
         drawButton.setOnClickListener(view -> openDrawPad());
+        showBattery();
         autoSyncEnabled = SyncPreferences.isAutoSyncEnabled(this);
         updateAutoSyncUi();
         setStatus(autoSyncEnabled ? "Watching in background" : "Ready");
@@ -81,6 +89,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onResume() {
+        showBattery();
         super.onResume();
         autoSyncEnabled = SyncPreferences.isAutoSyncEnabled(this);
         updateAutoSyncUi();
@@ -116,6 +125,12 @@ public class MainActivity extends Activity {
         panel.addView(RetroUi.sectionLabel(this, "Status"));
         statusText = RetroUi.body(this, "", 14, RetroUi.INK);
         panel.addView(statusText, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        panel.addView(RetroUi.sectionLabel(this, "Keychain battery"));
+        batteryText = RetroUi.body(this, "", 14, RetroUi.INK);
+        panel.addView(batteryText, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -435,6 +450,36 @@ public class MainActivity extends Activity {
             fluidButton.setEnabled(!busy);
             sendButton.setEnabled(!busy);
         });
+    }
+
+    /*
+     * The charge is whatever was read the last time the app spoke to the
+     * keychain, so the panel says when that was. A percentage on its own would
+     * claim to be current when it might be a day old.
+     */
+    private void showBattery() {
+        if (batteryText == null) {
+            return;
+        }
+
+        final int percent = SyncPreferences.batteryLevel(this);
+        if (percent < 0) {
+            batteryText.setText("Not read yet");
+            return;
+        }
+
+        final long readAt = SyncPreferences.batteryReadAt(this);
+        final long minutes =
+                (System.currentTimeMillis() - readAt) / 60000L;
+        final String when;
+        if (minutes < 2L) {
+            when = "just now";
+        } else if (minutes < 60L) {
+            when = minutes + " min ago";
+        } else {
+            when = (minutes / 60L) + " h ago";
+        }
+        batteryText.setText(percent + "%  ·  " + when);
     }
 
     private void setStatus(String status) {

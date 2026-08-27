@@ -44,6 +44,14 @@ final class KeychainBleSync {
         void onLog(String message);
 
         void onFinished(boolean success);
+
+        /*
+         * The charge, read on whatever connection was happening anyway. A
+         * keychain is not worth waking up to ask, so this arrives as a side
+         * effect of the clock sync rather than on its own errand.
+         */
+        default void onBatteryLevel(int percent) {
+        }
     }
 
     static final String DEVICE_NAME = "KeychainSync";
@@ -58,6 +66,11 @@ final class KeychainBleSync {
             UUID.fromString("11223344-5566-7788-9a49-315b10371342");
     private static final UUID TIME_CHARACTERISTIC_UUID =
             UUID.fromString("11223344-5566-7788-9a49-315b10371343");
+    /* The standard Battery Service, so this is not a private arrangement. */
+    private static final UUID BATTERY_SERVICE_UUID =
+            UUID.fromString("0000180f-0000-1000-8000-00805f9b34fb");
+    private static final UUID BATTERY_LEVEL_UUID =
+            UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb");
 
     private final Context context;
     private final Listener listener;
@@ -124,6 +137,19 @@ final class KeychainBleSync {
                         int status) {
                     mainHandler.post(() -> onWriteComplete(status));
                 }
+
+                @Override
+                public void onCharacteristicRead(
+                        BluetoothGatt source,
+                        BluetoothGattCharacteristic characteristic,
+                        byte[] value,
+                        int status) {
+                    final int percent =
+                            (status == BluetoothGatt.GATT_SUCCESS &&
+                             value != null && value.length > 0)
+                                    ? (value[0] & 0xFF) : -1;
+                    mainHandler.post(() -> onBatteryRead(source, percent));
+                }
             };
 
     private void onConnectionChanged(BluetoothGatt source, int status,
@@ -172,6 +198,48 @@ final class KeychainBleSync {
         }
 
         log("Exact command characteristic found");
+        /*
+         * Read the charge first: the command may put the keychain into a game
+         * and take the radio down, and then there is no second chance until
+         * the next connection.
+         */
+        if (!readBatteryLevel(source)) {
+            writePayload(source, characteristic);
+        }
+    }
+
+    /** True when a read was started and the write must wait for it. */
+    private boolean readBatteryLevel(BluetoothGatt source) {
+        BluetoothGattService service =
+                source.getService(BATTERY_SERVICE_UUID);
+        if (service == null) {
+            return false;
+        }
+        BluetoothGattCharacteristic level =
+                service.getCharacteristic(BATTERY_LEVEL_UUID);
+        if (level == null) {
+            return false;
+        }
+        return source.readCharacteristic(level);
+    }
+
+    private void onBatteryRead(BluetoothGatt source, int percent) {
+        if (finished) {
+            return;
+        }
+
+        if (percent >= 0 && percent <= 100) {
+            log("Keychain battery " + percent + "%");
+            listener.onBatteryLevel(percent);
+        }
+
+        /* Whatever the read did, the command it delayed still has to go. */
+        BluetoothGattCharacteristic characteristic =
+                findCommandCharacteristic(source);
+        if (characteristic == null) {
+            finish(false);
+            return;
+        }
         writePayload(source, characteristic);
     }
 
