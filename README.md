@@ -159,6 +159,17 @@ beacon nobody asked for. Picking it up brings the radio straight back.
 The old rule - advertise for 60 seconds after a triple shake - meant every
 button press had to be preceded by shaking the keychain awake.
 
+Once connected, the keychain asks to move the link onto Bluetooth 5's coded
+PHY, which trades throughput for range: it sends each bit several times over.
+It asks for S=2 - roughly double the range at half the rate - rather than S=8,
+which would be four times the range at an eighth, because the drawing pad
+streams points and an eighth of the rate would be felt in the hand. Asking is
+not the same as getting; a phone that cannot do it keeps the link on 1M, and
+the firmware logs which PHY the link actually settled on.
+
+Range also depends on transmit power, which is +8 dBm here against the 0 dBm
+Zephyr defaults to.
+
 The link itself asks for a 15-30 ms connection interval and a four second
 supervision timeout. Zephyr's default asks for 420 ms, which at a 45 ms
 interval tolerates nine missed connection events, and every connection died
