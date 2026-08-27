@@ -299,6 +299,19 @@ static bool start_transient(pet_behavior_t *pet,
  * The particle game is the exception: it was asked for, and it is played by
  * handling the keychain, so the very act of playing must not end it.
  */
+/*
+ * The particle field is played by tilting, so while it is on screen movement
+ * is its controller and not an interruption. Being startled, getting cross or
+ * waking up are all P1 and all displaced it, which meant the game ended a
+ * second or two after it started - as soon as anybody tried to play.
+ *
+ * Being dropped still gets through: that is not playing.
+ */
+static bool motion_is_the_controller(const pet_behavior_t *pet)
+{
+    return pet->transient_id == PET_ACT_FLUID;
+}
+
 static bool start_requested(pet_behavior_t *pet,
                             pet_behavior_id_t id,
                             pet_source_t source,
@@ -428,9 +441,12 @@ void pet_behavior_post(pet_behavior_t *pet, pet_event_t event, uint32_t now_ms)
         break;
 
     case PET_EVENT_PICKED_UP:
-        register_activity_reset(pet, now_ms);
         gain_bond(pet, now_ms);
-        (void)start_transient(pet, PET_WAKE_UP, PET_SOURCE_MOTION, now_ms);
+        if (!motion_is_the_controller(pet)) {
+            register_activity_reset(pet, now_ms);
+            (void)start_transient(pet, PET_WAKE_UP, PET_SOURCE_MOTION,
+                                  now_ms);
+        }
         break;
 
     case PET_EVENT_MOVEMENT:
@@ -474,13 +490,18 @@ void pet_behavior_post(pet_behavior_t *pet, pet_event_t event, uint32_t now_ms)
     case PET_EVENT_JOLT:
         register_activity_reset(pet, now_ms);
         gain_bond(pet, now_ms);
-        (void)start_transient(pet, PET_SURPRISED, PET_SOURCE_MOTION, now_ms);
+        if (!motion_is_the_controller(pet)) {
+            (void)start_transient(pet, PET_SURPRISED, PET_SOURCE_MOTION,
+                                  now_ms);
+        }
         break;
 
     case PET_EVENT_SHAKEN:
         register_activity_reset(pet, now_ms);
         gain_bond(pet, now_ms);
-        (void)start_transient(pet, PET_ANGRY, PET_SOURCE_MOTION, now_ms);
+        if (!motion_is_the_controller(pet)) {
+            (void)start_transient(pet, PET_ANGRY, PET_SOURCE_MOTION, now_ms);
+        }
         break;
 
     case PET_EVENT_PLAY_REQUESTED:

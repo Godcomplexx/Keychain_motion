@@ -402,7 +402,7 @@ static int64_t uptime_us(void)
 static esp_err_t render_pet_sleep_frame_if_due(int64_t now_us,
                                                int64_t *previous_frame_us,
                                                const pet_view_t *view,
-                                               float tilt_x, float tilt_y,
+                                               float tilt_side, float tilt_pitch,
                                                float frame_seconds)
 {
     if (!oled_display_is_available()) {
@@ -412,7 +412,8 @@ static esp_err_t render_pet_sleep_frame_if_due(int64_t now_us,
     /* Particles need every frame to look like a fluid; a face does not. */
     if (view->id == PET_ACT_FLUID) {
         *previous_frame_us = now_us;
-        return flip_animation_render(tilt_x, tilt_y, frame_seconds);
+        return flip_animation_render(tilt_side, tilt_pitch,
+                                     frame_seconds);
     }
 
     /* The pet's own state decides the rate, not the legacy screen mode. */
@@ -1286,8 +1287,15 @@ int main(void)
                  * The companion owns the active screen. FLIP is still here, but
                  * now as one of the activities the pet picks when left alone.
                  */
+                /*
+                 * The particles get the same axis mapping as everything else
+                 * that means left and right. They were being handed the raw
+                 * pair, so the field answered a tilt towards you as if it
+                 * were a tilt to the side - the same mistake the paddle had.
+                 */
                 render_err = (pet_view->id == PET_ACT_FLUID)
-                    ? flip_animation_render(tilt_x, tilt_y, frame_seconds)
+                    ? flip_animation_render(tilt_side, tilt_pitch,
+                                            frame_seconds)
                     : pet_face_render(pet_view, now_ms);
             }
             log_render_error("FLUID", render_err);
@@ -1296,7 +1304,7 @@ int main(void)
         case MOTION_STATE_SLEEP:
             render_err = render_pet_sleep_frame_if_due(
                 now_us, &previous_sleep_frame_us, pet_view,
-                tilt_x, tilt_y, frame_seconds);
+                tilt_side, tilt_pitch, frame_seconds);
             log_render_error("SLEEP", render_err);
             k_sleep(K_MSEC(LOW_POWER_LOOP_DELAY_MS));
             break;

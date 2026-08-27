@@ -159,6 +159,40 @@ static bool test_a_greeting_does_not_cut_short_a_request(void)
     return true;
 }
 
+/*
+ * The particle field is played by tilting, so movement during it is input.
+ * Every motion reaction is P1 and the game is P3, which meant it ended a
+ * second or two after it began - as soon as anybody tried to play.
+ */
+static bool test_playing_does_not_end_the_particle_game(void)
+{
+    pet_behavior_t pet;
+    pet_context_t context = normal_context();
+
+    pet_behavior_init(&pet, 1000U, 6U);
+    pet_behavior_post(&pet, PET_EVENT_PLAY_REQUESTED, 1000U);
+    pet_behavior_update(&pet, &context, 1000U);
+    CHECK(pet_behavior_view(&pet)->id == PET_ACT_FLUID);
+
+    pet_behavior_post(&pet, PET_EVENT_JOLT, 1200U);
+    pet_behavior_update(&pet, &context, 1200U);
+    CHECK(pet_behavior_view(&pet)->id == PET_ACT_FLUID);
+
+    pet_behavior_post(&pet, PET_EVENT_SHAKEN, 1400U);
+    pet_behavior_update(&pet, &context, 1400U);
+    CHECK(pet_behavior_view(&pet)->id == PET_ACT_FLUID);
+
+    pet_behavior_post(&pet, PET_EVENT_PICKED_UP, 1600U);
+    pet_behavior_update(&pet, &context, 1600U);
+    CHECK(pet_behavior_view(&pet)->id == PET_ACT_FLUID);
+
+    /* Being dropped is not playing, and still gets through. */
+    pet_behavior_post(&pet, PET_EVENT_FREE_FALL, 1800U);
+    pet_behavior_update(&pet, &context, 1800U);
+    CHECK(pet_behavior_view(&pet)->id == PET_STARTLED);
+    return true;
+}
+
 int main(void)
 {
     CHECK(test_boot_reaction_expires());
@@ -168,6 +202,7 @@ int main(void)
     CHECK(test_a_request_outranks_the_greeting_it_caused());
     CHECK(test_a_request_waits_for_a_fall_to_end());
     CHECK(test_a_greeting_does_not_cut_short_a_request());
+    CHECK(test_playing_does_not_end_the_particle_game());
 
     puts("PASS: pet_behavior host tests");
     return 0;
