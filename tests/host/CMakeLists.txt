@@ -54,3 +54,17 @@ target_include_directories(preview_time_screen PRIVATE
     ../../components/oled_display
     ../../xiao_nrf52840/include
 )
+
+# The screen state machine, with a host stub for the logging shim each
+# platform supplies differently.
+add_executable(test_motion_state
+    test_motion_state.c
+    ../../components/motion_state/motion_state.c
+)
+
+target_include_directories(test_motion_state PRIVATE
+    ../../components/motion_state/include
+    stubs
+)
+
+add_test(NAME motion_state COMMAND test_motion_state)

@@ -101,6 +101,10 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
             transition_to(machine, MOTION_STATE_DRAW, event, now_us);
         } else if (event == MOTION_EVENT_WAKE_REQUESTED) {
             transition_to(machine, MOTION_STATE_FLUID, event, now_us);
+        } else if (event == MOTION_EVENT_TIME_REQUESTED) {
+            /* Asking again holds it for another full spell, rather than
+             * doing nothing visible until the first one runs out. */
+            machine->entered_at_us = now_us;
         } else if (event == MOTION_EVENT_TIME_TIMEOUT) {
             /* After TIME, choose the next state from recent real motion. */
             transition_to(machine,
@@ -160,6 +164,14 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
             transition_to(machine, MOTION_STATE_GAME, event, now_us);
         } else if (event == MOTION_EVENT_TIME_REQUESTED) {
             transition_to(machine, MOTION_STATE_TIME, event, now_us);
+        } else if (event == MOTION_EVENT_MESSAGE_REQUESTED) {
+            transition_to(machine, MOTION_STATE_MESSAGE, event, now_us);
+        } else if (event == MOTION_EVENT_WAKE_REQUESTED) {
+            transition_to(machine, MOTION_STATE_FLUID, event, now_us);
+        } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
+            /* Opening the pad again starts a fresh sheet; the canvas is
+             * cleared by the command itself, so only the clock restarts. */
+            machine->entered_at_us = now_us;
         }
         break;
 
