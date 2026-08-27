@@ -241,6 +241,7 @@ static void finish_transient(pet_behavior_t *pet,
 
     const pet_behavior_id_t followup = pet->followup_id;
     pet->transient_id = PET_NEUTRAL;
+    pet->transient_requested = false;
     pet->followup_id = PET_NEUTRAL;
     pet->transient_deadline_ms = 0;
 
@@ -251,6 +252,23 @@ static void finish_transient(pet_behavior_t *pet,
         pet->transient_deadline_ms = now_ms + duration_for(followup);
     }
 }
+
+/*
+ * Something a person asked for by name, which outranks whatever the pet had
+ * decided to do on its own.
+ *
+ * Priority alone was not enough. An activity is P3, and every phone connection
+ * raises a P1 greeting - so pressing the button in the app connected, greeted,
+ * and then refused the very request that caused the connection. The press was
+ * dropped in silence, which looked exactly like a button that does nothing.
+ *
+ * Only being dropped survives a request: the keychain is in the air, and the
+ * particles can wait for it to land.
+ */
+static bool start_requested(pet_behavior_t *pet,
+                            pet_behavior_id_t id,
+                            pet_source_t source,
+                            uint32_t now_ms);
 
 static bool start_transient(pet_behavior_t *pet,
                             pet_behavior_id_t id,
@@ -267,6 +285,7 @@ static bool start_transient(pet_behavior_t *pet,
     }
 
     pet->transient_id = id;
+    pet->transient_requested = false;
     pet->transient_priority = priority;
     pet->transient_source = source;
     pet->transient_started_ms = now_ms;
@@ -280,6 +299,24 @@ static bool start_transient(pet_behavior_t *pet,
  * The particle game is the exception: it was asked for, and it is played by
  * handling the keychain, so the very act of playing must not end it.
  */
+static bool start_requested(pet_behavior_t *pet,
+                            pet_behavior_id_t id,
+                            pet_source_t source,
+                            uint32_t now_ms)
+{
+    if (pet->transient_id != PET_NEUTRAL) {
+        if (pet->transient_priority == PET_PRIORITY_P0) {
+            return false;
+        }
+        finish_transient(pet, now_ms, false);
+    }
+    if (!start_transient(pet, id, source, now_ms)) {
+        return false;
+    }
+    pet->transient_requested = true;
+    return true;
+}
+
 static void register_activity_reset(pet_behavior_t *pet, uint32_t now_ms)
 {
     if (is_activity(pet->transient_id) &&
@@ -448,12 +485,9 @@ void pet_behavior_post(pet_behavior_t *pet, pet_event_t event, uint32_t now_ms)
 
     case PET_EVENT_PLAY_REQUESTED:
         /* Asked for by name, so it skips the scheduler entirely. */
-        if (is_activity(pet->transient_id)) {
-            finish_transient(pet, now_ms, false);
-        }
         pet->last_activity_ms = now_ms;
         gain_bond(pet, now_ms);
-        (void)start_transient(pet, PET_ACT_FLUID, PET_SOURCE_MOTION, now_ms);
+        (void)start_requested(pet, PET_ACT_FLUID, PET_SOURCE_MOTION, now_ms);
         break;
 
     case PET_EVENT_CHARGER_ATTACHED:
@@ -482,10 +516,18 @@ void pet_behavior_post(pet_behavior_t *pet, pet_event_t event, uint32_t now_ms)
         break;
 
     case PET_EVENT_PHONE_CONNECTED:
-        register_activity_reset(pet, now_ms);
         gain_bond(pet, now_ms);
         pet->phone_window_open = false;
-        (void)start_transient(pet, PET_GREETING, PET_SOURCE_PHONE, now_ms);
+        /*
+         * Greeting is a courtesy, and the phone reconnects on its own every
+         * so often. Doing it over something the person asked for cut the
+         * particles from thirty seconds to eleven, measured on hardware.
+         */
+        if (!pet->transient_requested) {
+            register_activity_reset(pet, now_ms);
+            (void)start_transient(pet, PET_GREETING, PET_SOURCE_PHONE,
+                                  now_ms);
+        }
         break;
 
     case PET_EVENT_PHONE_WINDOW_OPEN:
@@ -502,12 +544,20 @@ void pet_behavior_post(pet_behavior_t *pet, pet_event_t event, uint32_t now_ms)
         break;
 
     case PET_EVENT_PHONE_SYNCED:
-        register_activity_reset(pet, now_ms);
         gain_bond(pet, now_ms);
         pet->phone_window_open = false;
-        if (start_transient(pet, PET_ACKNOWLEDGE, PET_SOURCE_PHONE, now_ms)) {
-            /* Nod first, then be visibly pleased about the new time. */
-            pet->followup_id = PET_HAPPY;
+        /*
+         * Same courtesy, same rule as greeting. A clock correction arrives on
+         * the phone's schedule, not the person's, and nodding about it took
+         * three seconds off the particles somebody had asked for.
+         */
+        if (!pet->transient_requested) {
+            register_activity_reset(pet, now_ms);
+            if (start_transient(pet, PET_ACKNOWLEDGE, PET_SOURCE_PHONE,
+                                now_ms)) {
+                /* Nod first, then be visibly pleased about the new time. */
+                pet->followup_id = PET_HAPPY;
+            }
         }
         break;
 

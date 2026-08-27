@@ -151,6 +151,13 @@ typedef struct {
     pet_behavior_id_t followup_id;
     pet_priority_t transient_priority;
     pet_source_t transient_source;
+    /*
+     * True while what is on screen was asked for by name rather than chosen by
+     * the pet. A courtesy like greeting a reconnecting phone must not cut it
+     * short: the person asked for thirty seconds of something and a background
+     * reconnection is not a reason to take it away.
+     */
+    bool transient_requested;
     uint32_t transient_started_ms;
     uint32_t transient_deadline_ms;
     uint32_t base_started_ms;
