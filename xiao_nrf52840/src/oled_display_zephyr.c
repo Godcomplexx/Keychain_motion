@@ -303,3 +303,30 @@ esp_err_t oled_display_deinit(void)
     s_available = false;
     return ESP_OK;
 }
+
+bool oled_display_is_color(void)
+{
+    return false;
+}
+
+int oled_display_panel_width(void)
+{
+    return BOARD_OLED_WIDTH;
+}
+
+int oled_display_panel_height(void)
+{
+    return BOARD_OLED_HEIGHT;
+}
+
+void oled_display_set_pixel_rgb(int x, int y, uint16_t color565)
+{
+    oled_display_set_pixel(x, y, color565 != 0U);
+}
+
+void oled_display_draw_text_rgb(int x, int y, const char *text,
+                                uint16_t color565)
+{
+    (void)color565;
+    oled_display_draw_text(x, y, text);
+}

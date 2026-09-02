@@ -8,7 +8,10 @@
 #include "pet_behavior.h"
 
 /*
- * Procedural face renderer for the 128x64 OLED.
+ * Procedural face renderer, in colour on the round GC9107 panel and
+ * monochrome on the original 128x64 OLED - oled_display_is_color() picks the
+ * path at render time, so the same behaviour logic and eye geometry drive
+ * both; only the palette and the panel's own resolution differ.
  *
  * The renderer owns no behaviour logic. It receives "which behaviour and how
  * long it has been running" and derives every pixel from that, so no sprite

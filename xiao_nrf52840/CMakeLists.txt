@@ -5,12 +5,20 @@ project(smart_motion_keychain_xiao)
 
 set(KEYCHAIN_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+# oled_display_zephyr.c (SSD1306/I2C, standard hardware) and
+# gc9107_display_zephyr.c (the bodge-wired round SPI panel) both implement
+# oled_display.h and cannot be compiled together - same symbols, one linker.
+# Every unit still ships the I2C OLED unless a build deliberately overrides
+# this, e.g. -DKEYCHAIN_DISPLAY_DRIVER=gc9107_display_zephyr.c.
+set(KEYCHAIN_DISPLAY_DRIVER "oled_display_zephyr.c" CACHE STRING
+    "Which src/*_zephyr.c file provides the oled_display.h API")
+
 target_sources(app PRIVATE
     src/battery_zephyr.c
     src/i2c_scan.c
     src/main.c
     src/mpu6050_zephyr.c
-    src/oled_display_zephyr.c
+    src/${KEYCHAIN_DISPLAY_DRIVER}
     src/phone_sync_zephyr.c
     src/usb_dfu_touch.c
     ${KEYCHAIN_ROOT}/components/breakout_game/breakout_game.c

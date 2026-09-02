@@ -104,6 +104,108 @@ static uint32_t s_blink_started_ms;
 static bool s_blinking;
 static bool s_blink_scheduled;
 
+/*
+ * Colour and the round panel, without a second copy of this file.
+ *
+ * Every drawing helper below already goes through plot() (pixels) or
+ * draw_text() (glyphs) instead of calling oled_display_set_pixel/draw_text
+ * directly. On the monochrome OLED those wrappers are a straight pass-through
+ * and every shape lands exactly where it always has, in the same 128x64
+ * canvas - this build path is unchanged pixel-for-pixel from before. On the
+ * round colour panel they write full-resolution RGB565 in panel-native
+ * coordinates instead of the smaller letterboxed canvas, and a soft
+ * elliptical clip in plot() keeps anything from being drawn into the four
+ * corners the round glass doesn't cover, so shapes never need to be trimmed
+ * by hand for the panel's shape - just placed reasonably and let the clip
+ * vignette the rest.
+ */
+static bool s_color_mode;
+static int s_screen_w = SCREEN_WIDTH;
+static int s_screen_h = SCREEN_HEIGHT;
+static int s_eye_center_y = EYE_CENTER_Y;
+static uint16_t s_fg_color = 0xFFFFU;
+
+static void sync_geometry(void)
+{
+    s_color_mode = oled_display_is_color();
+    s_screen_w = s_color_mode ? oled_display_panel_width() : SCREEN_WIDTH;
+    s_screen_h = s_color_mode ? oled_display_panel_height() : SCREEN_HEIGHT;
+    s_eye_center_y = s_screen_h / 2;
+}
+
+/* True for a pixel within a few pixels of the round panel's visible glass.
+ * Always true on the rectangular mono OLED, which has no such edge. */
+static bool inside_visible_area(int x, int y)
+{
+    if (!s_color_mode) {
+        return true;
+    }
+    const float cx = (float)s_screen_w / 2.0f;
+    const float cy = (float)s_screen_h / 2.0f;
+    const float rx = cx - 3.0f;
+    const float ry = cy - 3.0f;
+    if (rx <= 0.0f || ry <= 0.0f) {
+        return true;
+    }
+    const float dx = ((float)x + 0.5f - cx) / rx;
+    const float dy = ((float)y + 0.5f - cy) / ry;
+    return (dx * dx + dy * dy) <= 1.0f;
+}
+
+/* Every shape in this file draws through here. "on" is the current
+ * foreground colour (s_fg_color) in colour mode and plain white in mono;
+ * "off" is black either way, so lids and glares still read as erasing part
+ * of the eye against the background. */
+static void plot(int x, int y, bool on)
+{
+    if (s_color_mode) {
+        if (!inside_visible_area(x, y)) {
+            return;
+        }
+        oled_display_set_pixel_rgb(x, y, on ? s_fg_color : 0x0000U);
+    } else {
+        oled_display_set_pixel(x, y, on);
+    }
+}
+
+static void draw_text(int x, int y, const char *text)
+{
+    if (s_color_mode) {
+        oled_display_draw_text_rgb(x, y, text, s_fg_color);
+    } else {
+        oled_display_draw_text(x, y, text);
+    }
+}
+
+/*
+ * One accent colour per mood, standing in for the shape vocabulary the mono
+ * face relied on entirely by itself. Warm colours for the reactions that were
+ * already energetic (happy, greeting), red for anger, green for charging,
+ * cool blue/violet for the calm and sleepy states - the same associations the
+ * battery gauge and sparkles already leaned on informally.
+ */
+static uint16_t mood_color(const pet_view_t *view)
+{
+    switch (view->id) {
+    case PET_BORED:        return oled_display_rgb(90, 110, 150);
+    case PET_ASLEEP:       return oled_display_rgb(55, 60, 115);
+    case PET_SLEEPY:       return oled_display_rgb(130, 120, 210);
+    case PET_CHARGING:     return oled_display_rgb(90, 220, 130);
+    case PET_WAKE_UP:      return oled_display_rgb(210, 240, 255);
+    case PET_SURPRISED:    return oled_display_rgb(255, 235, 140);
+    case PET_ANGRY:        return oled_display_rgb(235, 70, 60);
+    case PET_HAPPY:        return oled_display_rgb(255, 200, 60);
+    case PET_CONNECTING:   return oled_display_rgb(90, 160, 255);
+    case PET_ACT_STARGAZE: return oled_display_rgb(115, 100, 220);
+    case PET_UPSIDE_DOWN:  return oled_display_rgb(235, 145, 55);
+    case PET_SOOTHED:      return oled_display_rgb(180, 160, 225);
+    case PET_STARTLED:     return oled_display_rgb(255, 255, 255);
+    case PET_CURIOUS:      return oled_display_rgb(70, 215, 195);
+    case PET_GREETING:     return oled_display_rgb(255, 210, 80);
+    default:                return oled_display_rgb(90, 205, 255); /* neutral cyan */
+    }
+}
+
 static bool time_reached(uint32_t now_ms, uint32_t deadline_ms)
 {
     return (int32_t)(now_ms - deadline_ms) >= 0;
@@ -197,7 +299,7 @@ static void fill_rect(int x, int y, int width, int height, bool on)
 {
     for (int row = 0; row < height; ++row) {
         for (int column = 0; column < width; ++column) {
-            oled_display_set_pixel(x + column, y + row, on);
+            plot(x + column, y + row, on);
         }
     }
 }
@@ -205,33 +307,33 @@ static void fill_rect(int x, int y, int width, int height, bool on)
 static void draw_rect_outline(int x, int y, int width, int height)
 {
     for (int column = 0; column < width; ++column) {
-        oled_display_set_pixel(x + column, y, true);
-        oled_display_set_pixel(x + column, y + height - 1, true);
+        plot(x + column, y, true);
+        plot(x + column, y + height - 1, true);
     }
     for (int row = 0; row < height; ++row) {
-        oled_display_set_pixel(x, y + row, true);
-        oled_display_set_pixel(x + width - 1, y + row, true);
+        plot(x, y + row, true);
+        plot(x + width - 1, y + row, true);
     }
 }
 
 static void draw_vertical_line(int x, int y_start, int y_end)
 {
     for (int y = y_start; y <= y_end; ++y) {
-        oled_display_set_pixel(x, y, true);
+        plot(x, y, true);
     }
 }
 
 static void draw_dot(int x, int y)
 {
-    oled_display_set_pixel(x, y, true);
-    oled_display_set_pixel(x + 1, y, true);
+    plot(x, y, true);
+    plot(x + 1, y, true);
 }
 
 static void draw_sparkle(int x, int y, int size)
 {
     for (int offset = -size; offset <= size; ++offset) {
-        oled_display_set_pixel(x + offset, y, true);
-        oled_display_set_pixel(x, y + offset, true);
+        plot(x + offset, y, true);
+        plot(x, y + offset, true);
     }
 }
 
@@ -262,7 +364,7 @@ static void fill_round_rect(int cx, int cy, int width, int height,
             inset = radius - (int)(chord + 0.5f);
         }
         for (int column = inset; column < width - inset; ++column) {
-            oled_display_set_pixel(x0 + column, y0 + row, on);
+            plot(x0 + column, y0 + row, on);
         }
     }
 }
@@ -319,7 +421,7 @@ static void paint_glare(int cx, int cy, int width, int height,
         const int from_outer = is_right ? (width - 1 - column) : column;
         const int depth = (tip_depth * from_outer) / (width > 1 ? width - 1 : 1);
         for (int row = 0; row < depth && row < height; ++row) {
-            oled_display_set_pixel(x0 + column, y0 + row, false);
+            plot(x0 + column, y0 + row, false);
         }
     }
 }
@@ -340,7 +442,7 @@ static void cut_lid(int cx, int cy, int width, int height,
         const int across = 2 * column - (width - 1);
         const int local_depth = depth + (slant * across) / (width - 1);
         for (int row = 0; row < local_depth && row < height; ++row) {
-            oled_display_set_pixel(x0 + column, y0 + row, false);
+            plot(x0 + column, y0 + row, false);
         }
     }
 }
@@ -355,7 +457,7 @@ static void draw_arc_eye(int cx, int cy, int width, int height, int thickness)
     for (int dx = -half; dx <= half; ++dx) {
         const int y = cy - height / 2 + (dx * dx * height) / (half * half);
         for (int layer = 0; layer < thickness; ++layer) {
-            oled_display_set_pixel(cx + dx, y + layer, true);
+            plot(cx + dx, y + layer, true);
         }
     }
 }
@@ -706,31 +808,60 @@ static void build_frame(const pet_view_t *view, uint32_t now_ms,
     }
 }
 
+/*
+ * Overlay Y positions below are written for the tall side of the range this
+ * renderer runs at: the mono canvas (0..64) and the round panel (0..~115).
+ * ry() carries a position tuned on the 0..64 canvas up to whichever one is
+ * actually active, so the round build spreads overlays through the extra
+ * height instead of leaving it as dead space below a face still sized for a
+ * 64-tall screen. On the round panel, plot()'s elliptical clip trims
+ * whatever lands past the visible glass - stars and the scan line reaching
+ * toward the poles are deliberately allowed to run into it, which vignettes
+ * them into the round shape instead of needing hand-fitted end points.
+ */
+static int ry(int canvas_64_y)
+{
+    return (int)((float)canvas_64_y * (float)s_screen_h / (float)SCREEN_HEIGHT +
+                0.5f);
+}
+
 static void draw_overlay(const face_frame_t *frame, const pet_view_t *view,
                          uint32_t now_ms)
 {
     switch (frame->overlay) {
     case OVERLAY_SLEEP_Z:
+        s_fg_color = oled_display_rgb(170, 190, 230);
         for (int index = 0; index < 3; ++index) {
             const float rise = phase(now_ms + (uint32_t)index * 900U, 2700U);
             if (rise >= 0.85f) {
                 continue;
             }
-            oled_display_draw_text(100 + index * 5,
-                                   30 - (int)(rise * 22.0f), "z");
+            draw_text(100 + index * 5, ry(30) - (int)(rise * ry(22)), "z");
         }
         break;
 
     case OVERLAY_BATTERY: {
         const int x = 50;
-        const int y = 2;
+        const int y = ry(2);
         const int width = 28;
         const int height = 9;
+        const uint16_t outline_color = oled_display_rgb(210, 210, 210);
+        uint16_t fill_color = oled_display_rgb(90, 220, 130); /* fine */
+        if (view->battery_percent != PET_BATTERY_UNKNOWN) {
+            if (view->battery_percent < 15U) {
+                fill_color = oled_display_rgb(230, 70, 60);   /* low */
+            } else if (view->battery_percent < 30U) {
+                fill_color = oled_display_rgb(230, 180, 50);  /* getting low */
+            }
+        }
+
+        s_fg_color = outline_color;
         draw_rect_outline(x, y, width, height);
         fill_rect(x + width, y + 3, 2, 3, true);
 
         if (view->battery_percent == PET_BATTERY_UNKNOWN) {
             /* Nothing measured: sweep rather than invent a level. */
+            s_fg_color = oled_display_rgb(90, 180, 255);
             const int sweep = (int)((float)(width - 4) * phase(now_ms, 2000U));
             if (sweep > 0) {
                 fill_rect(x + 2, y + 2, sweep, height - 4, true);
@@ -738,6 +869,7 @@ static void draw_overlay(const face_frame_t *frame, const pet_view_t *view,
             break;
         }
 
+        s_fg_color = fill_color;
         const int fill = ((width - 4) * view->battery_percent) / 100;
         if (fill > 0) {
             fill_rect(x + 2, y + 2, fill, height - 4, true);
@@ -759,7 +891,8 @@ static void draw_overlay(const face_frame_t *frame, const pet_view_t *view,
         }
         text[length++] = '%';
         text[length] = '\0';
-        oled_display_draw_text(x - 2 - length * 6, y + 1, text);
+        s_fg_color = outline_color;
+        draw_text(x - 2 - length * 6, y + 1, text);
         break;
     }
 
@@ -767,22 +900,26 @@ static void draw_overlay(const face_frame_t *frame, const pet_view_t *view,
         static const int spots[4][2] = {
             {22, 14}, {106, 16}, {18, 48}, {110, 46},
         };
+        s_fg_color = oled_display_rgb(255, 220, 120);
         for (int index = 0; index < 4; ++index) {
             if (phase(now_ms + (uint32_t)index * 300U, 1200U) < 0.6f) {
-                draw_sparkle(spots[index][0], spots[index][1], 3);
+                draw_sparkle(spots[index][0], ry(spots[index][1]), 3);
             }
         }
         break;
     }
 
     case OVERLAY_SCAN:
-        draw_vertical_line(8 + (int)(phase(now_ms, 800U) * 112.0f), 4, 60);
+        s_fg_color = oled_display_rgb(80, 220, 255);
+        draw_vertical_line(8 + (int)(phase(now_ms, 800U) * 112.0f),
+                           ry(4), ry(60));
         break;
 
     case OVERLAY_STARS:
+        s_fg_color = oled_display_rgb(255, 250, 200);
         for (int index = 0; index < 6; ++index) {
             const float rise = phase(now_ms + (uint32_t)index * 700U, 4200U);
-            draw_dot(10 + index * 21, 60 - (int)(rise * 56.0f));
+            draw_dot(10 + index * 21, ry(60) - (int)(rise * ry(56)));
         }
         break;
 
@@ -809,6 +946,9 @@ esp_err_t pet_face_render(const pet_view_t *view, uint32_t now_ms)
     if (view->id == PET_ACT_FLUID) {
         return ESP_ERR_NOT_SUPPORTED;
     }
+
+    sync_geometry();
+    s_fg_color = mood_color(view);
 
     face_frame_t frame;
     build_frame(view, now_ms, &frame);
@@ -867,7 +1007,7 @@ esp_err_t pet_face_render(const pet_view_t *view, uint32_t now_ms)
     const float turn_sin = sinf(frame.rotation);
     const float turn_cos = cosf(frame.rotation);
 
-    const int center_y = EYE_CENTER_Y + frame.group_dy + frame.gaze_y;
+    const int center_y = s_eye_center_y + frame.group_dy + frame.gaze_y;
     for (int eye = 0; eye < 2; ++eye) {
         /* Rotate each eye about the middle of the face before shifting it. */
         const float offset_x =
