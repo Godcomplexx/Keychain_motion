@@ -7,10 +7,7 @@
 typedef enum {
     MOTION_STATE_FLUID = 0,
     MOTION_STATE_SLEEP,
-    MOTION_STATE_TIME,
     MOTION_STATE_GAME,
-    /* The phone draws on the screen; the keychain is the paper. */
-    MOTION_STATE_DRAW,
     /* A short note from the phone, held long enough to read. */
     MOTION_STATE_MESSAGE,
 } motion_state_t;
@@ -20,12 +17,8 @@ typedef enum {
     MOTION_EVENT_MOVEMENT_DETECTED,
     MOTION_EVENT_STILLNESS_TIMEOUT,
     MOTION_EVENT_SHAKE_DETECTED,
-    MOTION_EVENT_TIME_REQUESTED,
-    MOTION_EVENT_TIME_TIMEOUT,
     MOTION_EVENT_GAME_REQUESTED,
     MOTION_EVENT_GAME_FINISHED,
-    MOTION_EVENT_DRAW_REQUESTED,
-    MOTION_EVENT_DRAW_FINISHED,
     /*
      * The phone asked for something that needs the resting screen, without
      * anybody having touched the keychain. Waking on MOVEMENT_DETECTED would

@@ -18,6 +18,9 @@ enum {
     ACT_FLUID_MS = 30000,
     ACT_STARGAZE_MS = 9000,
     ACT_WANDER_MS = 7000,
+    /* Long enough to actually read the time, short enough that it reads as a
+     * glance rather than as parking on the clock. */
+    ACT_CHECK_TIME_MS = 8000,
 
     /* A second shake inside this window means "annoyed", not "surprised". */
     SHAKE_ESCALATION_MS = 5000,
@@ -47,11 +50,11 @@ enum {
 };
 
 /*
- * Only the two solitary activities are scheduled. The particle game is not one
- * of them: it is played by tilting, so it needs a person. The pet asking for a
+ * Only the solitary activities are scheduled. The particle game is not one of
+ * them: it is played by tilting, so it needs a person. The pet asking for a
  * game nobody is there to play would be a stranger thing than silence.
  */
-#define ACT_POOL_SIZE 2
+#define ACT_POOL_SIZE 3
 
 /*
  * Wrap-safe comparison. A plain "now >= deadline" breaks once the millisecond
@@ -81,7 +84,7 @@ static uint32_t random_next(pet_behavior_t *pet)
 static bool is_activity(pet_behavior_id_t id)
 {
     return id == PET_ACT_FLUID || id == PET_ACT_STARGAZE ||
-           id == PET_ACT_WANDER;
+           id == PET_ACT_WANDER || id == PET_ACT_CHECK_TIME;
 }
 
 /* Position in the scheduler pool, or -1 for an activity it never picks. */
@@ -90,13 +93,18 @@ static int activity_index(pet_behavior_id_t id)
     switch (id) {
     case PET_ACT_STARGAZE: return 0;
     case PET_ACT_WANDER: return 1;
+    case PET_ACT_CHECK_TIME: return 2;
     default: return -1;
     }
 }
 
 static pet_behavior_id_t activity_at(int index)
 {
-    return (index == 0) ? PET_ACT_STARGAZE : PET_ACT_WANDER;
+    switch (index) {
+    case 0: return PET_ACT_STARGAZE;
+    case 1: return PET_ACT_WANDER;
+    default: return PET_ACT_CHECK_TIME;
+    }
 }
 
 static uint32_t duration_for(pet_behavior_id_t id)
@@ -116,6 +124,7 @@ static uint32_t duration_for(pet_behavior_id_t id)
     case PET_ACT_FLUID: return ACT_FLUID_MS;
     case PET_ACT_STARGAZE: return ACT_STARGAZE_MS;
     case PET_ACT_WANDER: return ACT_WANDER_MS;
+    case PET_ACT_CHECK_TIME: return ACT_CHECK_TIME_MS;
     default: return 0;
     }
 }
@@ -680,6 +689,7 @@ const char *pet_behavior_name(pet_behavior_id_t id)
     case PET_ACT_FLUID: return "act_fluid";
     case PET_ACT_STARGAZE: return "act_stargaze";
     case PET_ACT_WANDER: return "act_wander";
+    case PET_ACT_CHECK_TIME: return "act_check_time";
     default: return "unknown";
     }
 }

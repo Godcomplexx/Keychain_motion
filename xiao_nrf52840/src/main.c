@@ -14,7 +14,6 @@
 
 #include "breakout_game.h"
 #include "device_clock.h"
-#include "draw_pad.h"
 #include "esp_log.h"
 #include "flip_animation.h"
 #include "message_screen.h"
@@ -53,8 +52,6 @@
 #define BLE_QUIET_AFTER_SLEEP_US 120000000
 #define MICROSECONDS_PER_SECOND 1000000.0f
 #define TIME_FRAME_INTERVAL_US 1000000
-/* How long the clock stays up once asked for. */
-#define TIME_STATE_DURATION_US 15000000
 /* A note gets longer than the clock: it has to be read, not just glanced at. */
 #define MESSAGE_STATE_DURATION_US 20000000
 #define SLEEP_STILLNESS_TIMEOUT_US 30000000
@@ -70,12 +67,6 @@
 #define MOTION_SHAKE_COUNT_REQUIRED 3
 #define MOTION_SHAKE_WINDOW_US 2500000
 #define PHONE_SYNC_SHUTDOWN_GRACE_MS 200
-/*
- * Drawing ends by itself if the phone stops sending. Long enough that thinking
- * about what to draw does not close the pad, short enough that a phone which
- * crashed does not leave the screen stuck on someone's picture.
- */
-#define DRAW_IDLE_TIMEOUT_US 300000000
 #define OLED_ACTIVE_CONTRAST 0x9F
 #define OLED_GAME_CONTRAST 0x8F
 #define OLED_IDLE_CONTRAST 0x18
@@ -395,6 +386,44 @@ static int64_t uptime_us(void)
 }
 
 /*
+ * The pet's own "glance at the clock" activity - time_animation drawn in
+ * place of the face, since pet_face_render declines PET_ACT_CHECK_TIME.
+ * Progress comes from the pet_view itself (elapsed_ms/duration_ms), the same
+ * fields every other timed activity already carries, rather than from a
+ * screen-state timer: nothing about this is a motion_state any more, it is
+ * just another thing the P3 scheduler can pick.
+ */
+static esp_err_t render_pet_time_if_due(const pet_view_t *view,
+                                        int64_t now_us,
+                                        int64_t *previous_frame_us,
+                                        const device_clock_t *clock)
+{
+    if (!oled_display_is_available() ||
+        now_us - *previous_frame_us < TIME_FRAME_INTERVAL_US) {
+        return ESP_OK;
+    }
+
+    device_clock_datetime_t datetime;
+    device_clock_get_datetime(clock, now_us, &datetime);
+    const time_animation_view_t time_view = {
+        .year = datetime.year,
+        .month = datetime.month,
+        .day = datetime.day,
+        .hour = datetime.hour,
+        .minute = datetime.minute,
+        .second = datetime.second,
+        .clock_synced = device_clock_has_phone_sync(clock),
+    };
+    const esp_err_t err = time_animation_render(
+        &time_view, (int64_t)view->elapsed_ms * 1000,
+        (int64_t)view->duration_ms * 1000);
+    if (err == ESP_OK) {
+        *previous_frame_us = now_us;
+    }
+    return err;
+}
+
+/*
  * The resting screen is the same companion face, only redrawn a few times per
  * second. The pet decides what it looks like there: bored, asleep or busy with
  * one of its own activities.
@@ -403,7 +432,8 @@ static esp_err_t render_pet_sleep_frame_if_due(int64_t now_us,
                                                int64_t *previous_frame_us,
                                                const pet_view_t *view,
                                                float tilt_side, float tilt_pitch,
-                                               float frame_seconds)
+                                               float frame_seconds,
+                                               const device_clock_t *clock)
 {
     if (!oled_display_is_available()) {
         return ESP_OK;
@@ -414,6 +444,10 @@ static esp_err_t render_pet_sleep_frame_if_due(int64_t now_us,
         *previous_frame_us = now_us;
         return flip_animation_render(tilt_side, tilt_pitch,
                                      frame_seconds);
+    }
+
+    if (view->id == PET_ACT_CHECK_TIME) {
+        return render_pet_time_if_due(view, now_us, previous_frame_us, clock);
     }
 
     /* The pet's own state decides the rate, not the legacy screen mode. */
@@ -429,40 +463,10 @@ static esp_err_t render_pet_sleep_frame_if_due(int64_t now_us,
     return err;
 }
 
-static esp_err_t render_time_frame_if_due(int64_t now_us,
-                                          int64_t entered_at_us,
-                                          int64_t *previous_frame_us,
-                                          const device_clock_t *clock)
-{
-    if (!oled_display_is_available() ||
-        now_us - *previous_frame_us < TIME_FRAME_INTERVAL_US) {
-        return ESP_OK;
-    }
-
-    device_clock_datetime_t datetime;
-    device_clock_get_datetime(clock, now_us, &datetime);
-    const time_animation_view_t view = {
-        .year = datetime.year,
-        .month = datetime.month,
-        .day = datetime.day,
-        .hour = datetime.hour,
-        .minute = datetime.minute,
-        .second = datetime.second,
-        .clock_synced = device_clock_has_phone_sync(clock),
-    };
-    const esp_err_t err = time_animation_render(
-        &view, now_us - entered_at_us, TIME_STATE_DURATION_US);
-    if (err == ESP_OK) {
-        *previous_frame_us = now_us;
-    }
-    return err;
-}
-
 static void apply_state_entry_actions(motion_state_t state,
                                       int64_t now_us,
                                       int64_t *previous_frame_us,
-                                      int64_t *previous_sleep_frame_us,
-                                      int64_t *previous_time_frame_us)
+                                      int64_t *previous_sleep_frame_us)
 {
     /* A missing OLED is not fatal: BLE and sensor probing keep running. */
     if (!oled_display_is_available()) {
@@ -482,16 +486,9 @@ static void apply_state_entry_actions(motion_state_t state,
         (void)oled_display_set_contrast(OLED_IDLE_CONTRAST);
         *previous_sleep_frame_us = 0;
         break;
-    case MOTION_STATE_TIME:
-        (void)oled_display_set_contrast(OLED_ACTIVE_CONTRAST);
-        *previous_time_frame_us = 0;
-        break;
     case MOTION_STATE_GAME:
         (void)oled_display_set_contrast(OLED_GAME_CONTRAST);
         *previous_frame_us = now_us;
-        break;
-    case MOTION_STATE_DRAW:
-        (void)oled_display_set_contrast(OLED_ACTIVE_CONTRAST);
         break;
     case MOTION_STATE_MESSAGE:
         (void)oled_display_set_contrast(OLED_ACTIVE_CONTRAST);
@@ -597,11 +594,8 @@ int main(void)
     motion_state_machine_t state_machine;
     motion_state_init(&state_machine, now_us);
     breakout_game_t game;
-    draw_pad_t pad;
-    draw_pad_init(&pad);
     char message[PHONE_SYNC_MESSAGE_MAX_LENGTH + 1] = {0};
     int64_t previous_message_frame_us = 0;
-    int64_t last_draw_packet_us = 0;
 
     /* The companion behaviour engine keeps its own clock in milliseconds. */
     pet_behavior_t pet;
@@ -696,8 +690,7 @@ int main(void)
                 ESP_LOGI(TAG, "OLED connected after boot");
                 apply_state_entry_actions(current_state, now_us,
                                           &previous_frame_us,
-                                          &previous_sleep_frame_us,
-                                          &previous_time_frame_us);
+                                          &previous_sleep_frame_us);
             }
         }
 
@@ -775,10 +768,6 @@ int main(void)
                 (void)phone_sync_get_message(message, sizeof(message));
                 previous_message_frame_us = 0;
             }
-            if (plan.reset_canvas) {
-                draw_pad_clear(&pad);
-                last_draw_packet_us = now_us;
-            }
             if (plan.event != MOTION_EVENT_NONE) {
                 /*
                  * A command is a reason to keep the screen on. Without this
@@ -808,37 +797,7 @@ int main(void)
             if (current_state != previous_state) {
                 apply_state_entry_actions(current_state, now_us,
                                           &previous_frame_us,
-                                          &previous_sleep_frame_us,
-                                          &previous_time_frame_us);
-            } else if (current_state == MOTION_STATE_TIME) {
-                previous_time_frame_us = 0;
-            }
-        }
-
-        if (current_state == MOTION_STATE_DRAW) {
-            phone_sync_draw_packet_t packet;
-            while (phone_sync_get_draw_packet(&packet)) {
-                (void)draw_pad_apply_packet(&pad, packet.data, packet.length);
-                last_draw_packet_us = now_us;
-            }
-
-            /*
-             * Two ways out that do not involve the phone asking: it hung up, or
-             * it stopped talking. Without these the screen would stay on
-             * someone's drawing until the battery ran out.
-             */
-            const bool phone_gone = !phone_sync_is_connected();
-            const bool gone_quiet =
-                now_us - last_draw_packet_us >= DRAW_IDLE_TIMEOUT_US;
-            if (phone_gone || gone_quiet) {
-                current_state = motion_state_handle_event(
-                    &state_machine, MOTION_EVENT_DRAW_FINISHED, true, now_us);
-                apply_state_entry_actions(current_state, now_us,
-                                          &previous_frame_us,
-                                          &previous_sleep_frame_us,
-                                          &previous_time_frame_us);
-                ESP_LOGW(TAG, "Draw pad closed: %s",
-                         phone_gone ? "phone disconnected" : "no packets");
+                                          &previous_sleep_frame_us);
             }
         }
 
@@ -846,11 +805,12 @@ int main(void)
         if (phone_sync_available &&
             phone_sync_get_datetime_update(&phone_datetime)) {
             /*
-             * Setting the clock no longer takes the screen. A background sync
-             * should correct the time and leave the companion alone; the clock
-             * appears when someone asks for it, which is TIME:SHOW. The radio
-             * also stays up, because the phone is connected and the next
-             * button press has to have somewhere to arrive.
+             * Setting the clock does not take the screen. This corrects the
+             * time in the background and leaves the companion alone; the
+             * clock only appears when the pet decides to glance at it
+             * (PET_ACT_CHECK_TIME). The radio also stays up, because the
+             * phone is connected and the next button press has to have
+             * somewhere to arrive.
              */
             device_clock_set_datetime(&clock, &phone_datetime, now_us);
             pet_behavior_post(&pet, PET_EVENT_PHONE_SYNCED, now_ms);
@@ -867,23 +827,7 @@ int main(void)
                 movement_recent, now_us);
             apply_state_entry_actions(current_state, now_us,
                                       &previous_frame_us,
-                                      &previous_sleep_frame_us,
-                                      &previous_time_frame_us);
-        }
-
-        if (current_state == MOTION_STATE_TIME &&
-            now_us - motion_state_entered_at_us(&state_machine) >=
-                TIME_STATE_DURATION_US) {
-            const bool movement_recent = !mpu6050_is_available() ||
-                motion_detector_has_recent_movement(&detector, now_us);
-            (void)motion_state_handle_event(&state_machine,
-                                            MOTION_EVENT_TIME_TIMEOUT,
-                                            movement_recent, now_us);
-            current_state = motion_state_get(&state_machine);
-            apply_state_entry_actions(current_state, now_us,
-                                      &previous_frame_us,
-                                      &previous_sleep_frame_us,
-                                      &previous_time_frame_us);
+                                      &previous_sleep_frame_us);
         }
 
         mpu6050_accel_data_t raw_data = {0, 0, 256};
@@ -906,8 +850,7 @@ int main(void)
                         true, now_us);
                     apply_state_entry_actions(current_state, now_us,
                                               &previous_frame_us,
-                                              &previous_sleep_frame_us,
-                                              &previous_time_frame_us);
+                                              &previous_sleep_frame_us);
                 }
             }
         }
@@ -926,8 +869,7 @@ int main(void)
                     &state_machine, MOTION_EVENT_GAME_FINISHED, true, now_us);
                 apply_state_entry_actions(current_state, now_us,
                                           &previous_frame_us,
-                                          &previous_sleep_frame_us,
-                                          &previous_time_frame_us);
+                                          &previous_sleep_frame_us);
             }
             /*
              * Shaking no longer has to open a radio window - advertising is
@@ -957,8 +899,7 @@ int main(void)
             if (current_state != previous_state) {
                 apply_state_entry_actions(current_state, now_us,
                                           &previous_frame_us,
-                                          &previous_sleep_frame_us,
-                                          &previous_time_frame_us);
+                                          &previous_sleep_frame_us);
             }
         }
 
@@ -1264,6 +1205,10 @@ int main(void)
             if (pet_view->id == PET_ACT_FLUID) {
                 /* Start the particle activity from a clean, known state. */
                 flip_animation_reset();
+            } else if (pet_view->id == PET_ACT_CHECK_TIME) {
+                /* Force an immediate draw rather than waiting up to a second
+                 * for the throttle in render_pet_time_if_due to allow one. */
+                previous_time_frame_us = 0;
             }
             ESP_LOGI(TAG, "pet: %s -> %s priority=P%d bond=%u",
                      pet_behavior_name(previous_pet_id),
@@ -1286,19 +1231,26 @@ int main(void)
         case MOTION_STATE_FLUID:
             if (oled_display_is_available()) {
                 /*
-                 * The companion owns the active screen. FLIP is still here, but
-                 * now as one of the activities the pet picks when left alone.
+                 * The companion owns the active screen. FLIP and the clock are
+                 * still here, but now as activities the pet picks when left
+                 * alone, same as on the resting screen below.
                  */
-                /*
-                 * The particles get the same axis mapping as everything else
-                 * that means left and right. They were being handed the raw
-                 * pair, so the field answered a tilt towards you as if it
-                 * were a tilt to the side - the same mistake the paddle had.
-                 */
-                render_err = (pet_view->id == PET_ACT_FLUID)
-                    ? flip_animation_render(tilt_side, tilt_pitch,
-                                            frame_seconds)
-                    : pet_face_render(pet_view, now_ms);
+                if (pet_view->id == PET_ACT_FLUID) {
+                    /*
+                     * The particles get the same axis mapping as everything
+                     * else that means left and right. They were being handed
+                     * the raw pair, so the field answered a tilt towards you
+                     * as if it were a tilt to the side - the same mistake the
+                     * paddle had.
+                     */
+                    render_err = flip_animation_render(tilt_side, tilt_pitch,
+                                                       frame_seconds);
+                } else if (pet_view->id == PET_ACT_CHECK_TIME) {
+                    render_err = render_pet_time_if_due(
+                        pet_view, now_us, &previous_time_frame_us, &clock);
+                } else {
+                    render_err = pet_face_render(pet_view, now_ms);
+                }
             }
             log_render_error("FLUID", render_err);
             k_sleep(K_MSEC(ACTIVE_FRAME_DELAY_MS));
@@ -1306,15 +1258,8 @@ int main(void)
         case MOTION_STATE_SLEEP:
             render_err = render_pet_sleep_frame_if_due(
                 now_us, &previous_sleep_frame_us, pet_view,
-                tilt_side, tilt_pitch, frame_seconds);
+                tilt_side, tilt_pitch, frame_seconds, &clock);
             log_render_error("SLEEP", render_err);
-            k_sleep(K_MSEC(LOW_POWER_LOOP_DELAY_MS));
-            break;
-        case MOTION_STATE_TIME:
-            render_err = render_time_frame_if_due(
-                now_us, motion_state_entered_at_us(&state_machine),
-                &previous_time_frame_us, &clock);
-            log_render_error("TIME", render_err);
             k_sleep(K_MSEC(LOW_POWER_LOOP_DELAY_MS));
             break;
         case MOTION_STATE_MESSAGE:
@@ -1330,19 +1275,6 @@ int main(void)
             log_render_error("MESSAGE", render_err);
             k_sleep(K_MSEC(LOW_POWER_LOOP_DELAY_MS));
             break;
-        case MOTION_STATE_DRAW:
-            if (oled_display_is_available()) {
-                render_err = draw_pad_render(&pad);
-            }
-            log_render_error("DRAW", render_err);
-            /*
-             * Faster than the game loop: the whole point is that the stroke
-             * appears while the finger is still moving. draw_pad_render only
-             * touches the panel when a packet actually changed something, so an
-             * idle pad costs nothing but this sleep.
-             */
-            k_sleep(K_MSEC(ACTIVE_FRAME_DELAY_MS));
-            break;
         case MOTION_STATE_GAME: {
             bool game_finished = false;
             render_err = breakout_game_update_and_render(
@@ -1353,8 +1285,7 @@ int main(void)
                     &state_machine, MOTION_EVENT_GAME_FINISHED, true, now_us);
                 apply_state_entry_actions(current_state, now_us,
                                           &previous_frame_us,
-                                          &previous_sleep_frame_us,
-                                          &previous_time_frame_us);
+                                          &previous_sleep_frame_us);
             }
             k_sleep(K_MSEC(GAME_FRAME_DELAY_MS));
             break;

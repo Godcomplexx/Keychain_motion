@@ -133,23 +133,37 @@ static void sync_geometry(void)
     s_eye_center_y = s_screen_h / 2;
 }
 
-/* True for a pixel within a few pixels of the round panel's visible glass.
- * Always true on the rectangular mono OLED, which has no such edge. */
+/*
+ * True for a pixel within the round panel's visible glass.
+ * Always true on the rectangular mono OLED, which has no such edge.
+ *
+ * The first cut used an ellipse centred on the framebuffer and touching all
+ * four sides, with a 3px margin - too generous, and the glass isn't centred
+ * in the panel's own RAM the way the datasheet's 128x115 suggested. Shifting
+ * the circle toward the top-left did not clear it; on the actual unit the
+ * visible glass sits further toward the bottom-right of the frame than that,
+ * so CENTER_OFFSET_X/Y below now nudge it the other way. Adjust these two in
+ * the direction the stray edge still shows - negative pulls the safe circle
+ * up/left, positive pulls it down/right - a few pixels at a time rather than
+ * guessing the true offset in one jump.
+ */
+#define VISIBLE_CENTER_OFFSET_X 4.0f
+#define VISIBLE_CENTER_OFFSET_Y 4.0f
+
 static bool inside_visible_area(int x, int y)
 {
     if (!s_color_mode) {
         return true;
     }
-    const float cx = (float)s_screen_w / 2.0f;
-    const float cy = (float)s_screen_h / 2.0f;
-    const float rx = cx - 3.0f;
-    const float ry = cy - 3.0f;
-    if (rx <= 0.0f || ry <= 0.0f) {
+    const float cx = (float)s_screen_w / 2.0f + VISIBLE_CENTER_OFFSET_X;
+    const float cy = (float)s_screen_h / 2.0f + VISIBLE_CENTER_OFFSET_Y;
+    const float radius = ((float)s_screen_h / 2.0f) - 10.0f;
+    if (radius <= 0.0f) {
         return true;
     }
-    const float dx = ((float)x + 0.5f - cx) / rx;
-    const float dy = ((float)y + 0.5f - cy) / ry;
-    return (dx * dx + dy * dy) <= 1.0f;
+    const float dx = (float)x + 0.5f - cx;
+    const float dy = (float)y + 0.5f - cy;
+    return (dx * dx + dy * dy) <= (radius * radius);
 }
 
 /* Every shape in this file draws through here. "on" is the current
@@ -942,8 +956,12 @@ esp_err_t pet_face_render(const pet_view_t *view, uint32_t now_ms)
     if (view == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    /* FLIP already owns the whole framebuffer; the caller renders that one. */
-    if (view->id == PET_ACT_FLUID) {
+    /*
+     * Both hand the whole framebuffer to something else: FLIP owns it for the
+     * particle field, and the clock (time_animation) owns it while the pet is
+     * glancing at the time. The caller renders those instead.
+     */
+    if (view->id == PET_ACT_FLUID || view->id == PET_ACT_CHECK_TIME) {
         return ESP_ERR_NOT_SUPPORTED;
     }
 

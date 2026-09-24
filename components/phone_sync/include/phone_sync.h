@@ -12,16 +12,6 @@ typedef enum {
     PHONE_SYNC_COMMAND_NONE = 0,
     PHONE_SYNC_COMMAND_START_GAME,
     /*
-     * Setting the clock and putting the clock on screen are separate things.
-     * A background sync should correct the time without taking the display
-     * away from whatever the companion was doing; showing it is a request the
-     * person makes, so it has a command of its own.
-     */
-    PHONE_SYNC_COMMAND_SHOW_TIME,
-    /* The phone opened its drawing pad, and later closed it. */
-    PHONE_SYNC_COMMAND_START_DRAW,
-    PHONE_SYNC_COMMAND_STOP_DRAW,
-    /*
      * The particle field, which the pet plays with rather than performs. It
      * has no other way in: the tilt gesture is switched off and the activity
      * scheduler never picks it, because a two-player game started alone would
@@ -33,26 +23,13 @@ typedef enum {
 } phone_sync_command_t;
 
 /*
- * What one command write can carry after the TEXT: prefix. It is also about
- * as much as the screen can show at a size worth reading, so the transport
- * and the display happen to agree on what "short" means.
+ * What one command write can carry after the TEXT: prefix. Sized for a
+ * forwarded phone notification (app + title + body), not just a hand-typed
+ * note - the screen only ever shows the first ~57 characters of it anyway
+ * (message_screen_render truncates rather than scrolling), so the rest
+ * exists to be readable in the log, not on the panel.
  */
-#define PHONE_SYNC_MESSAGE_MAX_LENGTH 26
-
-/*
- * Drawing has a characteristic of its own, written without a response. The
- * command characteristic is text and answers every write, which is the right
- * shape for "show the clock" and the wrong one for a finger moving: an
- * acknowledged write per packet halves the rate and the stroke visibly lags
- * the finger.
- */
-#define PHONE_SYNC_DRAW_PACKET_MAX 244
-#define PHONE_SYNC_DRAW_QUEUE_LENGTH 8
-
-typedef struct {
-    uint8_t length;
-    uint8_t data[PHONE_SYNC_DRAW_PACKET_MAX];
-} phone_sync_draw_packet_t;
+#define PHONE_SYNC_MESSAGE_MAX_LENGTH 140
 
 esp_err_t phone_sync_init(void);
 
@@ -74,25 +51,16 @@ bool phone_sync_get_command(phone_sync_command_t *command);
 bool phone_sync_take_connected_event(void);
 
 /*
- * True while a phone is connected. Drawing needs this: if the phone walks away
- * mid-stroke, nothing else would ever take the screen back.
- */
-bool phone_sync_is_connected(void);
-
-/*
- * Copies the note that arrived with the last SHOW_MESSAGE command. False when
- * none has arrived, in which case the buffer is left alone.
- */
-/*
  * Publishes the charge over the standard Battery Service. Values above 100 are
  * ignored rather than clamped: a reading that far out is a fault worth leaving
  * visible, not a number worth rounding.
  */
 void phone_sync_publish_battery(uint8_t percent);
 
+/*
+ * Copies the note that arrived with the last SHOW_MESSAGE command. False when
+ * none has arrived, in which case the buffer is left alone.
+ */
 bool phone_sync_get_message(char *out, size_t length);
-
-/* Takes the oldest queued drawing packet. False when the queue is empty. */
-bool phone_sync_get_draw_packet(phone_sync_draw_packet_t *packet);
 
 #endif /* PHONE_SYNC_H */

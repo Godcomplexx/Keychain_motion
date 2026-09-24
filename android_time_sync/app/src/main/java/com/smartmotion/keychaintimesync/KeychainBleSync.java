@@ -71,6 +71,14 @@ final class KeychainBleSync {
             UUID.fromString("0000180f-0000-1000-8000-00805f9b34fb");
     private static final UUID BATTERY_LEVEL_UUID =
             UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb");
+    /*
+     * A note that started life as a forwarded phone notification can be well
+     * past the old 26-character hand-typed limit. The default ATT MTU (23
+     * bytes, 20 of payload) is not enough room for that in one write, so this
+     * connection now asks for the same size KeychainDrawSession already does
+     * on its own connection - not a new number invented for this class.
+     */
+    private static final int REQUESTED_MTU = 247;
 
     private final Context context;
     private final Listener listener;
@@ -131,6 +139,12 @@ final class KeychainBleSync {
                 }
 
                 @Override
+                public void onMtuChanged(BluetoothGatt source, int mtu,
+                                         int status) {
+                    mainHandler.post(() -> onMtuNegotiated(source, status));
+                }
+
+                @Override
                 public void onCharacteristicWrite(
                         BluetoothGatt source,
                         BluetoothGattCharacteristic characteristic,
@@ -165,14 +179,26 @@ final class KeychainBleSync {
         }
 
         if (newState == BluetoothProfile.STATE_CONNECTED) {
-            log("Connected, discovering services");
-            mainHandler.postDelayed(source::discoverServices, 250L);
+            log("Connected, negotiating packet size");
+            if (!source.requestMtu(REQUESTED_MTU)) {
+                mainHandler.postDelayed(source::discoverServices, 250L);
+            }
         } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
             log(writeStarted
                     ? "Disconnected after write request"
                     : "Disconnected before command write");
             finish(false);
         }
+    }
+
+    private void onMtuNegotiated(BluetoothGatt source, int status) {
+        if (finished) {
+            return;
+        }
+        log(status == BluetoothGatt.GATT_SUCCESS
+                ? "Packet size negotiated, discovering services"
+                : "Packet size negotiation failed, discovering services anyway");
+        mainHandler.postDelayed(source::discoverServices, 250L);
     }
 
     private void onServicesReady(BluetoothGatt source, int status) {
@@ -280,8 +306,12 @@ final class KeychainBleSync {
     }
 
     @SuppressLint("MissingPermission")
-    /* What one command write carries, and what the screen can show. */
-    static final int MESSAGE_MAX_LENGTH = 26;
+    /*
+     * Matches PHONE_SYNC_MESSAGE_MAX_LENGTH. Room for a forwarded phone
+     * notification (app + title + body), not just what the panel can show at
+     * once - the keychain truncates for display on its own.
+     */
+    static final int MESSAGE_MAX_LENGTH = 140;
 
     private String pendingMessage = "";
 

@@ -3,13 +3,53 @@ package com.smartmotion.keychaintimesync;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+
 final class SyncPreferences {
     private static final String FILE_NAME = "keychain_sync";
     private static final String AUTO_SYNC_ENABLED = "auto_sync_enabled";
     private static final String BATTERY_PERCENT = "battery_percent";
     private static final String BATTERY_READ_AT = "battery_read_at";
+    private static final String NOTIFICATION_RELAY_ENABLED =
+            "notification_relay_enabled";
+    /* Package names allowed to reach the keychain's screen. Off (empty) by
+     * default: a relay that silently forwards everything, including 2FA
+     * codes and private messages, is not a default anyone asked for. */
+    private static final String NOTIFICATION_RELAY_APPS =
+            "notification_relay_apps";
 
     private SyncPreferences() {
+    }
+
+    static boolean isNotificationRelayEnabled(Context context) {
+        return preferences(context)
+                .getBoolean(NOTIFICATION_RELAY_ENABLED, false);
+    }
+
+    static void setNotificationRelayEnabled(Context context,
+                                            boolean enabled) {
+        preferences(context).edit()
+                .putBoolean(NOTIFICATION_RELAY_ENABLED, enabled)
+                .apply();
+    }
+
+    /** Package names to forward notifications from. Never the live instance
+     * SharedPreferences hands back - callers get their own copy. */
+    static Set<String> notificationRelayApps(Context context) {
+        Set<String> stored = preferences(context)
+                .getStringSet(NOTIFICATION_RELAY_APPS,
+                              Collections.emptySet());
+        return new HashSet<>(stored);
+    }
+
+    static void setNotificationRelayApps(Context context,
+                                         Set<String> packageNames) {
+        preferences(context).edit()
+                .putStringSet(NOTIFICATION_RELAY_APPS,
+                              new HashSet<>(packageNames))
+                .apply();
     }
 
     static boolean isAutoSyncEnabled(Context context) {

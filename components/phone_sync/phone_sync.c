@@ -21,7 +21,8 @@
 #include "store/config/ble_store_config.h"
 
 #define PHONE_SYNC_DEVICE_NAME "KeychainSync"
-#define PHONE_SYNC_WRITE_MAX_LEN 24
+/* "TEXT:" (5 bytes) plus a full PHONE_SYNC_MESSAGE_MAX_LENGTH note. */
+#define PHONE_SYNC_WRITE_MAX_LEN (PHONE_SYNC_MESSAGE_MAX_LENGTH + 5)
 
 static const char *TAG = "phone_sync";
 
@@ -39,15 +40,9 @@ static volatile bool s_connected_event;
 static phone_sync_command_t s_pending_command;
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_time_chr_handle;
-static uint16_t s_draw_chr_handle;
 static device_clock_datetime_t s_pending_datetime;
 static char s_message[PHONE_SYNC_MESSAGE_MAX_LENGTH + 1];
 static bool s_has_message;
-/* Written from NimBLE host context, drained by the application loop. */
-static phone_sync_draw_packet_t s_draw_queue[PHONE_SYNC_DRAW_QUEUE_LENGTH];
-static uint8_t s_draw_head;
-static uint8_t s_draw_tail;
-static uint32_t s_draw_dropped;
 static portMUX_TYPE s_datetime_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static const ble_uuid128_t s_phone_sync_service_uuid =
@@ -56,16 +51,9 @@ static const ble_uuid128_t s_phone_sync_service_uuid =
 static const ble_uuid128_t s_phone_sync_time_uuid =
     BLE_UUID128_INIT(0x43, 0x13, 0x37, 0x10, 0x5b, 0x31, 0x49, 0x9a,
                      0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11);
-static const ble_uuid128_t s_phone_sync_draw_uuid =
-    BLE_UUID128_INIT(0x44, 0x13, 0x37, 0x10, 0x5b, 0x31, 0x49, 0x9a,
-                     0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11);
 
 static int gap_event(struct ble_gap_event *event, void *arg);
 static int time_access(uint16_t conn_handle,
-                       uint16_t attr_handle,
-                       struct ble_gatt_access_ctxt *ctxt,
-                       void *arg);
-static int draw_access(uint16_t conn_handle,
                        uint16_t attr_handle,
                        struct ble_gatt_access_ctxt *ctxt,
                        void *arg);
@@ -79,12 +67,6 @@ static const struct ble_gatt_chr_def s_time_characteristics[] = {
         .access_cb = time_access,
         .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
         .val_handle = &s_time_chr_handle,
-    },
-    {
-        .uuid = &s_phone_sync_draw_uuid.u,
-        .access_cb = draw_access,
-        .flags = BLE_GATT_CHR_F_WRITE_NO_RSP,
-        .val_handle = &s_draw_chr_handle,
     },
     {
         0,
@@ -308,7 +290,7 @@ static int time_access(uint16_t conn_handle,
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
         const char help[] =
-            "time, TIME:SHOW, TEXT:<note>, GAME:START, FLUID:START, DRAW:*";
+            "time, TEXT:<note>, GAME:START, FLUID:START";
         ESP_LOGI(TAG, "Phone read time characteristic");
         const int rc = os_mbuf_append(ctxt->om,
                                       help,
@@ -331,33 +313,6 @@ static int time_access(uint16_t conn_handle,
         ESP_LOGI(TAG, "Phone write attempt: len=%u, text=%s",
                  (unsigned int)length,
                  text);
-
-        if (strcmp(text, "TIME:SHOW") == 0) {
-            portENTER_CRITICAL(&s_datetime_lock);
-            s_pending_command = PHONE_SYNC_COMMAND_SHOW_TIME;
-            portEXIT_CRITICAL(&s_datetime_lock);
-            ESP_LOGW(TAG, "Show time command received");
-            return 0;
-        }
-
-        if (strcmp(text, "DRAW:START") == 0) {
-            portENTER_CRITICAL(&s_datetime_lock);
-            s_pending_command = PHONE_SYNC_COMMAND_START_DRAW;
-            s_draw_head = 0U;
-            s_draw_tail = 0U;
-            s_draw_dropped = 0U;
-            portEXIT_CRITICAL(&s_datetime_lock);
-            ESP_LOGW(TAG, "Draw pad opened");
-            return 0;
-        }
-
-        if (strcmp(text, "DRAW:STOP") == 0) {
-            portENTER_CRITICAL(&s_datetime_lock);
-            s_pending_command = PHONE_SYNC_COMMAND_STOP_DRAW;
-            portEXIT_CRITICAL(&s_datetime_lock);
-            ESP_LOGW(TAG, "Draw pad closed");
-            return 0;
-        }
 
         if (strncmp(text, "TEXT:", 5) == 0) {
             portENTER_CRITICAL(&s_datetime_lock);
@@ -409,64 +364,6 @@ static int time_access(uint16_t conn_handle,
     }
 
     return BLE_ATT_ERR_UNLIKELY;
-}
-
-static int draw_access(uint16_t conn_handle,
-                       uint16_t attr_handle,
-                       struct ble_gatt_access_ctxt *ctxt,
-                       void *arg)
-{
-    (void)conn_handle;
-    (void)attr_handle;
-    (void)arg;
-
-    if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR) {
-        return BLE_ATT_ERR_UNLIKELY;
-    }
-
-    uint8_t buffer[PHONE_SYNC_DRAW_PACKET_MAX];
-    uint16_t length = 0;
-    if (ble_hs_mbuf_to_flat(ctxt->om, buffer, sizeof(buffer), &length) != 0 ||
-        length == 0U) {
-        return BLE_ATT_ERR_UNLIKELY;
-    }
-
-    /*
-     * The copy deliberately happens outside the critical section. This is a
-     * spinlock that disables interrupts on the core, and holding it for a
-     * 244-byte memcpy would delay every interrupt on the chip for no reason.
-     *
-     * It is safe because NimBLE serialises its GATT callbacks: there is only
-     * ever one writer here. The slot is not visible to the reader until the
-     * tail moves, which is the only thing the lock has to cover.
-     */
-    portENTER_CRITICAL(&s_datetime_lock);
-    const uint8_t slot = s_draw_tail;
-    const uint8_t next = (uint8_t)((slot + 1U) %
-                                   PHONE_SYNC_DRAW_QUEUE_LENGTH);
-    const bool full = next == s_draw_head;
-    if (full) {
-        /*
-         * Dropping the newest packet loses the end of a stroke; dropping the
-         * oldest would lose its start and leave the rest hanging off whatever
-         * came before. Neither is good, so the queue is sized to make this
-         * rare and the count is logged when it is not.
-         */
-        ++s_draw_dropped;
-    }
-    portEXIT_CRITICAL(&s_datetime_lock);
-
-    if (full) {
-        return 0;
-    }
-
-    s_draw_queue[slot].length = (uint8_t)length;
-    memcpy(s_draw_queue[slot].data, buffer, length);
-
-    portENTER_CRITICAL(&s_datetime_lock);
-    s_draw_tail = next;
-    portEXIT_CRITICAL(&s_datetime_lock);
-    return 0;
 }
 
 static void on_reset(int reason)
@@ -628,35 +525,6 @@ bool phone_sync_get_message(char *out, size_t length)
     }
     portEXIT_CRITICAL(&s_datetime_lock);
     return has_message;
-}
-
-bool phone_sync_is_connected(void)
-{
-    return s_conn_handle != BLE_HS_CONN_HANDLE_NONE;
-}
-
-bool phone_sync_get_draw_packet(phone_sync_draw_packet_t *packet)
-{
-    if (packet == NULL) {
-        return false;
-    }
-
-    portENTER_CRITICAL(&s_datetime_lock);
-    const bool has_packet = s_draw_head != s_draw_tail;
-    if (has_packet) {
-        *packet = s_draw_queue[s_draw_head];
-        s_draw_head = (uint8_t)((s_draw_head + 1U) %
-                                PHONE_SYNC_DRAW_QUEUE_LENGTH);
-    }
-    const uint32_t dropped = s_draw_dropped;
-    s_draw_dropped = 0U;
-    portEXIT_CRITICAL(&s_datetime_lock);
-
-    if (dropped != 0U) {
-        ESP_LOGW(TAG, "Draw queue overflowed: %u packets dropped",
-                 (unsigned int)dropped);
-    }
-    return has_packet;
 }
 
 bool phone_sync_take_connected_event(void)

@@ -16,7 +16,6 @@
 #include "board_config.h"
 #include "breakout_game.h"
 #include "device_clock.h"
-#include "draw_pad.h"
 #include "message_screen.h"
 #include "flip_animation.h"
 #include "i2c_bus.h"
@@ -27,7 +26,6 @@
 #include "oled_display.h"
 #include "phone_commands.h"
 #include "phone_sync.h"
-#include "time_animation.h"
 
 /*
  * FLUID is the default active state, so its loop rate dominates average power.
@@ -54,8 +52,6 @@
  * by about 4x. The progress bar still advances smoothly enough at 1 Hz.
  */
 #define TIME_FRAME_INTERVAL_US 1000000
-/* How long the clock stays up once asked for. */
-#define TIME_STATE_DURATION_US 15000000
 #define LOW_POWER_SENSOR_READ_INTERVAL_US 150000
 #define LOW_POWER_LOOP_DELAY_MS 50
 #define MOTION_MOVEMENT_DELTA_THRESHOLD 80
@@ -70,8 +66,6 @@
 #define PHONE_SYNC_WINDOW_US 60000000
 /* A note gets longer than the clock: it has to be read, not just glanced at. */
 #define MESSAGE_STATE_DURATION_US 20000000
-/* Drawing ends by itself if the phone stops sending; see the v2 note. */
-#define DRAW_IDLE_TIMEOUT_US 300000000
 #define PHONE_SYNC_SHUTDOWN_GRACE_MS 200
 #define CPU_MAX_FREQUENCY_MHZ 160
 #define CPU_MIN_FREQUENCY_MHZ 40
@@ -186,43 +180,11 @@ static esp_err_t render_sleep_frame_if_due(int64_t now_us,
     return ESP_OK;
 }
 
-static esp_err_t render_time_frame_if_due(int64_t now_us,
-                                          int64_t entered_at_us,
-                                          int64_t *previous_time_frame_us,
-                                          const device_clock_t *device_clock)
-{
-    if (now_us - *previous_time_frame_us < TIME_FRAME_INTERVAL_US) {
-        return ESP_OK;
-    }
-
-    device_clock_datetime_t datetime;
-    device_clock_get_datetime(device_clock, now_us, &datetime);
-
-    const time_animation_view_t view = {
-        .year = datetime.year,
-        .month = datetime.month,
-        .day = datetime.day,
-        .hour = datetime.hour,
-        .minute = datetime.minute,
-        .second = datetime.second,
-        .clock_synced = device_clock_has_phone_sync(device_clock),
-    };
-
-    esp_err_t err = time_animation_render(&view,
-                                          now_us - entered_at_us,
-                                          TIME_STATE_DURATION_US);
-    if (err == ESP_OK) {
-        *previous_time_frame_us = now_us;
-    }
-    return err;
-}
-
 static esp_err_t apply_state_entry_actions(motion_state_t state,
                                            int64_t now_us,
                                            int64_t *previous_frame_us,
                                            int64_t *previous_sleep_frame_us,
-                                           uint8_t *sleep_frame_index,
-                                           int64_t *previous_time_frame_us)
+                                           uint8_t *sleep_frame_index)
 {
     switch (state) {
     case MOTION_STATE_FLUID:
@@ -245,28 +207,12 @@ static esp_err_t apply_state_entry_actions(motion_state_t state,
         *previous_sleep_frame_us = 0;
         break;
 
-    case MOTION_STATE_TIME:
-        /* TIME is a visible interaction state, so restore normal contrast. */
-        ESP_RETURN_ON_ERROR(oled_display_set_power(true),
-                            TAG, "OLED time power setup failed");
-        ESP_RETURN_ON_ERROR(oled_display_set_contrast(OLED_ACTIVE_CONTRAST),
-                            TAG, "OLED time contrast setup failed");
-        *previous_time_frame_us = 0;
-        break;
-
     case MOTION_STATE_GAME:
         ESP_RETURN_ON_ERROR(oled_display_set_power(true),
                             TAG, "OLED game power setup failed");
         ESP_RETURN_ON_ERROR(oled_display_set_contrast(OLED_GAME_CONTRAST),
                             TAG, "OLED game contrast setup failed");
         *previous_frame_us = now_us;
-        break;
-
-    case MOTION_STATE_DRAW:
-        ESP_RETURN_ON_ERROR(oled_display_set_power(true),
-                            TAG, "OLED draw power setup failed");
-        ESP_RETURN_ON_ERROR(oled_display_set_contrast(OLED_ACTIVE_CONTRAST),
-                            TAG, "OLED draw contrast setup failed");
         break;
 
     case MOTION_STATE_MESSAGE:
@@ -479,10 +425,6 @@ void app_main(void)
                              esp_err_to_name(shutdown_err));
                 }
             }
-            if (plan.reset_canvas) {
-                draw_pad_clear(&draw_pad);
-                last_draw_packet_us = current_frame_us;
-            }
             if (plan.event != MOTION_EVENT_NONE) {
                 /* A command keeps the screen on; see the v2 note. */
                 motion_detector_mark_active(&motion_detector,
@@ -513,13 +455,10 @@ void app_main(void)
                                                 current_frame_us,
                                                 &previous_frame_us,
                                                 &previous_sleep_frame_us,
-                                                &sleep_frame_index,
-                                                &previous_time_frame_us);
+                                                &sleep_frame_index);
                 if (err != ESP_OK) {
                     break;
                 }
-            } else if (current_state == MOTION_STATE_TIME) {
-                previous_time_frame_us = 0;
             }
         }
 
@@ -532,8 +471,7 @@ void app_main(void)
             /*
              * Setting the clock no longer takes the screen or drops the radio.
              * A background sync should correct the time and leave the keychain
-             * alone; the clock appears when someone asks for it, which is
-             * TIME:SHOW, and the next button press needs somewhere to arrive.
+             * alone.
              */
             ESP_LOGW(TAG,
                      "Clock synced from phone: %04u-%02u-%02u %02u:%02u:%02u",
@@ -572,8 +510,7 @@ void app_main(void)
                                                 current_frame_us,
                                                 &previous_frame_us,
                                                 &previous_sleep_frame_us,
-                                                &sleep_frame_index,
-                                                &previous_time_frame_us);
+                                                &sleep_frame_index);
                 if (err != ESP_OK) {
                     break;
                 }
@@ -597,8 +534,7 @@ void app_main(void)
                                             current_frame_us,
                                             &previous_frame_us,
                                             &previous_sleep_frame_us,
-                                            &sleep_frame_index,
-                                            &previous_time_frame_us);
+                                            &sleep_frame_index);
             if (err != ESP_OK) {
                 break;
             }
@@ -619,8 +555,7 @@ void app_main(void)
                                             current_frame_us,
                                             &previous_frame_us,
                                             &previous_sleep_frame_us,
-                                            &sleep_frame_index,
-                                            &previous_time_frame_us);
+                                            &sleep_frame_index);
             if (err != ESP_OK) {
                 break;
             }
@@ -721,8 +656,7 @@ void app_main(void)
                                                 current_frame_us,
                                                 &previous_frame_us,
                                                 &previous_sleep_frame_us,
-                                                &sleep_frame_index,
-                                                &previous_time_frame_us);
+                                                &sleep_frame_index);
                 if (err != ESP_OK) {
                     break;
                 }
@@ -764,8 +698,7 @@ void app_main(void)
                                                 current_frame_us,
                                                 &previous_frame_us,
                                                 &previous_sleep_frame_us,
-                                                &sleep_frame_index,
-                                                &previous_time_frame_us);
+                                                &sleep_frame_index);
                 if (err != ESP_OK) {
                     break;
                 }
@@ -886,8 +819,7 @@ void app_main(void)
                                                 current_frame_us,
                                                 &previous_frame_us,
                                                 &previous_sleep_frame_us,
-                                                &sleep_frame_index,
-                                                &previous_time_frame_us);
+                                                &sleep_frame_index);
                 if (err != ESP_OK) {
                     break;
                 }

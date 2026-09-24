@@ -402,6 +402,24 @@ esp_err_t oled_display_show_startup(void)
     return oled_display_present();
 }
 
+/*
+ * Moving where content is drawn inside the declared 128x115 window made no
+ * difference to the stripes reported on the right and bottom edges - which
+ * makes sense, because every present() already overwrites every pixel of
+ * that window with fresh black-or-content, every frame. Nothing inside it can
+ * ever go stale. So the stray pixels must be outside it: the datasheet
+ * excerpt this driver was written from gives 128x115 as the visible
+ * resolution, not necessarily the controller's addressable RAM, and if the
+ * real GRAM is a little larger, whatever was sitting in that margin since
+ * power-on has simply never been written. These two constants blank a strip
+ * past the nominal edge to test and fix exactly that, without changing
+ * anything about where the actual picture is drawn.
+ */
+#define GRAM_MARGIN_RIGHT 16
+#define GRAM_MARGIN_BOTTOM 20
+
+static const uint8_t s_black_margin[BOARD_GC9107_WIDTH * GRAM_MARGIN_BOTTOM * 2];
+
 esp_err_t oled_display_present(void)
 {
     if (!s_available) {
@@ -421,7 +439,42 @@ esp_err_t oled_display_present(void)
     if (err != ESP_OK) {
         return err;
     }
-    return write_bytes(s_pixel_buffer, sizeof(s_pixel_buffer), true);
+    err = write_bytes(s_pixel_buffer, sizeof(s_pixel_buffer), true);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    /* Blank a margin of GRAM past the nominal edge - past-column strip down
+     * the right, then the past-row strip along the bottom (that second strip
+     * also covers the right strip's own overhang, so the two together tile
+     * an L without leaving the bottom-right corner unwritten). */
+    err = set_window(BOARD_GC9107_WIDTH, 0, GRAM_MARGIN_RIGHT,
+                     BOARD_GC9107_HEIGHT + GRAM_MARGIN_BOTTOM);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = write_command(GC9107_CMD_RAMWR);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = write_bytes(s_black_margin,
+                      (size_t)GRAM_MARGIN_RIGHT *
+                          (BOARD_GC9107_HEIGHT + GRAM_MARGIN_BOTTOM) * 2U,
+                      true);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = set_window(0, BOARD_GC9107_HEIGHT, BOARD_GC9107_WIDTH,
+                     GRAM_MARGIN_BOTTOM);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = write_command(GC9107_CMD_RAMWR);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return write_bytes(s_black_margin, sizeof(s_black_margin), true);
 }
 
 esp_err_t oled_display_set_contrast(uint8_t contrast)

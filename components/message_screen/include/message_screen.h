@@ -8,14 +8,15 @@
 #include "esp_err.h"
 
 /*
- * A short note from the phone, shown in the same framed panel as the clock.
+ * A note from the phone (hand-typed, or a forwarded notification), shown in
+ * the same framed panel as the clock.
  *
- * The length is what one BLE command write carries, which is also about as
- * much as fits on a 128x64 screen at a size worth reading. That the transport
- * and the screen agree on "short" is a happy accident, but it does mean
- * neither has to explain itself to the other.
+ * This is documentary, matching PHONE_SYNC_MESSAGE_MAX_LENGTH - the wrap/
+ * render path below truncates rather than scrolls, so anything past what
+ * the small size's 3 rows of 19 columns can hold is silently dropped
+ * regardless of how long the string handed to message_screen_render is.
  */
-#define MESSAGE_SCREEN_MAX_LENGTH 26
+#define MESSAGE_SCREEN_MAX_LENGTH 140
 
 /*
  * Two sizes, chosen by how much there is to say. A few words get the large

@@ -23,8 +23,9 @@ void pet_face_reset(uint32_t seed);
 
 /*
  * Draw one frame for the given behaviour view.
- * Returns ESP_ERR_NOT_SUPPORTED for PET_ACT_FLUID: that activity is rendered by
- * the existing flip animation, so the caller draws it instead.
+ * Returns ESP_ERR_NOT_SUPPORTED for PET_ACT_FLUID and PET_ACT_CHECK_TIME:
+ * those are rendered by the flip animation and the clock respectively, so the
+ * caller draws them instead.
  */
 esp_err_t pet_face_render(const pet_view_t *view, uint32_t now_ms);
 

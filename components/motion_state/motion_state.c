@@ -68,10 +68,6 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
             transition_to(machine, MOTION_STATE_MESSAGE, event, now_us);
         } else if (event == MOTION_EVENT_GAME_REQUESTED) {
             transition_to(machine, MOTION_STATE_GAME, event, now_us);
-        } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
-            transition_to(machine, MOTION_STATE_DRAW, event, now_us);
-        } else if (event == MOTION_EVENT_TIME_REQUESTED) {
-            transition_to(machine, MOTION_STATE_TIME, event, now_us);
         } else if (event == MOTION_EVENT_STILLNESS_TIMEOUT) {
             transition_to(machine, MOTION_STATE_SLEEP, event, now_us);
         }
@@ -82,36 +78,9 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
             transition_to(machine, MOTION_STATE_MESSAGE, event, now_us);
         } else if (event == MOTION_EVENT_GAME_REQUESTED) {
             transition_to(machine, MOTION_STATE_GAME, event, now_us);
-        } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
-            transition_to(machine, MOTION_STATE_DRAW, event, now_us);
-        } else if (event == MOTION_EVENT_TIME_REQUESTED) {
-            transition_to(machine, MOTION_STATE_TIME, event, now_us);
         } else if (event == MOTION_EVENT_MOVEMENT_DETECTED ||
                    event == MOTION_EVENT_WAKE_REQUESTED) {
             transition_to(machine, MOTION_STATE_FLUID, event, now_us);
-        }
-        break;
-
-    case MOTION_STATE_TIME:
-        if (event == MOTION_EVENT_MESSAGE_REQUESTED) {
-            transition_to(machine, MOTION_STATE_MESSAGE, event, now_us);
-        } else if (event == MOTION_EVENT_GAME_REQUESTED) {
-            transition_to(machine, MOTION_STATE_GAME, event, now_us);
-        } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
-            transition_to(machine, MOTION_STATE_DRAW, event, now_us);
-        } else if (event == MOTION_EVENT_WAKE_REQUESTED) {
-            transition_to(machine, MOTION_STATE_FLUID, event, now_us);
-        } else if (event == MOTION_EVENT_TIME_REQUESTED) {
-            /* Asking again holds it for another full spell, rather than
-             * doing nothing visible until the first one runs out. */
-            machine->entered_at_us = now_us;
-        } else if (event == MOTION_EVENT_TIME_TIMEOUT) {
-            /* After TIME, choose the next state from recent real motion. */
-            transition_to(machine,
-                          movement_recent ? MOTION_STATE_FLUID
-                                          : MOTION_STATE_SLEEP,
-                          event,
-                          now_us);
         }
         break;
 
@@ -137,10 +106,6 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
             machine->entered_at_us = now_us;
         } else if (event == MOTION_EVENT_GAME_REQUESTED) {
             transition_to(machine, MOTION_STATE_GAME, event, now_us);
-        } else if (event == MOTION_EVENT_TIME_REQUESTED) {
-            transition_to(machine, MOTION_STATE_TIME, event, now_us);
-        } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
-            transition_to(machine, MOTION_STATE_DRAW, event, now_us);
         } else if (event == MOTION_EVENT_WAKE_REQUESTED) {
             /*
              * Asking for the particles while a note is up has to put the face
@@ -149,29 +114,6 @@ motion_state_t motion_state_handle_event(motion_state_machine_t *machine,
              * pet entered act_fluid while the screen stayed on MESSAGE.
              */
             transition_to(machine, MOTION_STATE_FLUID, event, now_us);
-        }
-        break;
-
-    case MOTION_STATE_DRAW:
-        /*
-         * Drawing ends only when the phone says so, hangs up, or falls silent.
-         * Movement must not end it: the keychain is held in one hand while the
-         * other draws, so it is being jostled the whole time.
-         */
-        if (event == MOTION_EVENT_DRAW_FINISHED) {
-            transition_to(machine, MOTION_STATE_FLUID, event, now_us);
-        } else if (event == MOTION_EVENT_GAME_REQUESTED) {
-            transition_to(machine, MOTION_STATE_GAME, event, now_us);
-        } else if (event == MOTION_EVENT_TIME_REQUESTED) {
-            transition_to(machine, MOTION_STATE_TIME, event, now_us);
-        } else if (event == MOTION_EVENT_MESSAGE_REQUESTED) {
-            transition_to(machine, MOTION_STATE_MESSAGE, event, now_us);
-        } else if (event == MOTION_EVENT_WAKE_REQUESTED) {
-            transition_to(machine, MOTION_STATE_FLUID, event, now_us);
-        } else if (event == MOTION_EVENT_DRAW_REQUESTED) {
-            /* Opening the pad again starts a fresh sheet; the canvas is
-             * cleared by the command itself, so only the clock restarts. */
-            machine->entered_at_us = now_us;
         }
         break;
 
@@ -191,12 +133,8 @@ const char *motion_state_name(motion_state_t state)
         return "FLUID";
     case MOTION_STATE_SLEEP:
         return "SLEEP";
-    case MOTION_STATE_TIME:
-        return "TIME";
     case MOTION_STATE_GAME:
         return "GAME";
-    case MOTION_STATE_DRAW:
-        return "DRAW";
     case MOTION_STATE_MESSAGE:
         return "MESSAGE";
     default:
@@ -215,18 +153,10 @@ const char *motion_event_name(motion_event_t event)
         return "STILLNESS_TIMEOUT";
     case MOTION_EVENT_SHAKE_DETECTED:
         return "SHAKE_DETECTED";
-    case MOTION_EVENT_TIME_REQUESTED:
-        return "TIME_REQUESTED";
-    case MOTION_EVENT_TIME_TIMEOUT:
-        return "TIME_TIMEOUT";
     case MOTION_EVENT_GAME_REQUESTED:
         return "GAME_REQUESTED";
     case MOTION_EVENT_GAME_FINISHED:
         return "GAME_FINISHED";
-    case MOTION_EVENT_DRAW_REQUESTED:
-        return "DRAW_REQUESTED";
-    case MOTION_EVENT_DRAW_FINISHED:
-        return "DRAW_FINISHED";
     case MOTION_EVENT_WAKE_REQUESTED:
         return "WAKE_REQUESTED";
     case MOTION_EVENT_MESSAGE_REQUESTED:

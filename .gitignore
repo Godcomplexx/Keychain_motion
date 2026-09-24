@@ -45,3 +45,6 @@ Thumbs.db
 Desktop.ini
 *.log
 *.tmp
+
+# Screen recordings - kept locally, too heavy for the repository history
+docs/assets/*.mp4

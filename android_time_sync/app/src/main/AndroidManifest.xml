@@ -18,6 +18,20 @@
         android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="30" />
 
+    <!--
+      Without this, PackageManager.getInstalledApplications() in
+      NotificationAppsActivity only sees a handful of automatically-visible
+      packages on Android 11+ (package visibility) - everything else,
+      Telegram included, is invisible to this app until it asks. This asks
+      for exactly what that screen filters for: apps with a launcher icon.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -39,11 +53,24 @@
             android:exported="false"
             android:screenOrientation="portrait" />
 
+        <activity
+            android:name=".NotificationAppsActivity"
+            android:exported="false" />
+
         <service
             android:name=".KeychainSyncService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice"
             android:stopWithTask="false" />
+
+        <service
+            android:name=".NotificationRelayService"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
 
         <receiver
             android:name=".BootReceiver"

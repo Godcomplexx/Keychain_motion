@@ -19,15 +19,10 @@
 typedef struct {
     /* MOTION_EVENT_NONE when the command changes no screen. */
     motion_event_t event;
-    /*
-     * True only for the game, which needs the radio off and expects nothing
-     * further. Drawing is the opposite: the radio is the whole point, since
-     * every stroke arrives over it.
-     */
+    /* True only for the game, which needs the radio off and expects nothing
+     * further. */
     bool shutdown_radio;
     bool start_game;
-    /* The drawing pad opens on a blank canvas rather than the last picture. */
-    bool reset_canvas;
     /*
      * The particle field belongs to the companion rather than to the screen
      * state machine, so it is asked for separately from the event above.

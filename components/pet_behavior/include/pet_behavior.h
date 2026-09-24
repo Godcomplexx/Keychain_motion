@@ -56,6 +56,9 @@ typedef enum {
     PET_ACT_FLUID,
     PET_ACT_STARGAZE,
     PET_ACT_WANDER,
+    /* Glances at the clock on its own, the way a phone-triggered "show time"
+     * used to be requested by hand. */
+    PET_ACT_CHECK_TIME,
     PET_ID_COUNT,
 } pet_behavior_id_t;
 

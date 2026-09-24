@@ -37,6 +37,7 @@ public class MainActivity extends Activity {
     private Button sendButton;
     private Button fluidButton;
     private Button drawButton;
+    private Button notificationsButton;
     private KeychainBleSync bleSync;
     private boolean autoSyncEnabled;
     /* What to say when the current manual operation succeeds. */
@@ -77,6 +78,8 @@ public class MainActivity extends Activity {
         sendButton.setOnClickListener(view -> sendMessage());
         fluidButton.setOnClickListener(view -> startParticles());
         drawButton.setOnClickListener(view -> openDrawPad());
+        notificationsButton.setOnClickListener(view ->
+                startActivity(NotificationAppsActivity.intent(this)));
         showBattery();
         autoSyncEnabled = SyncPreferences.isAutoSyncEnabled(this);
         updateAutoSyncUi();
@@ -159,7 +162,7 @@ public class MainActivity extends Activity {
         messageInput.setTextSize(14);
         messageInput.setTextColor(RetroUi.INK);
         messageInput.setHintTextColor(RetroUi.MUTED);
-        messageInput.setHint("Up to 26 letters");
+        messageInput.setHint("A short note");
         messageInput.setSingleLine(true);
         messageInput.setAllCaps(true);
         /* The screen has no lower case, so the field does not pretend to. */
@@ -182,6 +185,15 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         sendParams.topMargin = RetroUi.dp(this, 8);
         panel.addView(RetroUi.buttonRow(this, sendButton), sendParams);
+
+        panel.addView(RetroUi.sectionLabel(this, "Notifications"));
+        notificationsButton = RetroUi.pill(this, "Forwarding settings");
+        LinearLayout.LayoutParams notifParams =
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+        panel.addView(RetroUi.buttonRow(this, notificationsButton),
+                      notifParams);
 
         panel.addView(RetroUi.sectionLabel(this, "Log"));
         logText = RetroUi.body(this, "", 11, RetroUi.INK);
