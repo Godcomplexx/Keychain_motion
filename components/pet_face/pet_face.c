@@ -118,19 +118,36 @@ static bool s_blink_scheduled;
  * corners the round glass doesn't cover, so shapes never need to be trimmed
  * by hand for the panel's shape - just placed reasonably and let the clip
  * vignette the rest.
+ *
+ * A panel wider than the 128-pixel design (the 240x240 GC9A01) keeps the same
+ * logical coordinates, but s_scale physical pixels stand for each logical one
+ * and the eye shapes are carved at full panel resolution instead of being
+ * drawn small and stretched. At s_scale 1 every conversion below is the
+ * identity, so the 128-wide panels draw exactly the same pixels as before.
  */
 static bool s_color_mode;
 static int s_screen_w = SCREEN_WIDTH;
 static int s_screen_h = SCREEN_HEIGHT;
 static int s_eye_center_y = EYE_CENTER_Y;
+static float s_scale = 1.0f;
 static uint16_t s_fg_color = 0xFFFFU;
 
 static void sync_geometry(void)
 {
     s_color_mode = oled_display_is_color();
-    s_screen_w = s_color_mode ? oled_display_panel_width() : SCREEN_WIDTH;
-    s_screen_h = s_color_mode ? oled_display_panel_height() : SCREEN_HEIGHT;
+    const int panel_w = s_color_mode ? oled_display_panel_width() : SCREEN_WIDTH;
+    const int panel_h = s_color_mode ? oled_display_panel_height() : SCREEN_HEIGHT;
+    s_scale = (panel_w > SCREEN_WIDTH) ? (float)panel_w / SCREEN_WIDTH : 1.0f;
+    /* Logical size: 128 wide, and as tall as the panel's proportions allow. */
+    s_screen_w = (int)((float)panel_w / s_scale + 0.5f);
+    s_screen_h = (int)((float)panel_h / s_scale + 0.5f);
     s_eye_center_y = s_screen_h / 2;
+}
+
+/* A logical coordinate or length in physical panel pixels. */
+static int to_px(int logical)
+{
+    return (int)floorf((float)logical * s_scale + 0.5f);
 }
 
 /*
@@ -150,42 +167,79 @@ static void sync_geometry(void)
 #define VISIBLE_CENTER_OFFSET_X 4.0f
 #define VISIBLE_CENTER_OFFSET_Y 4.0f
 
+/*
+ * The circle is kept in integer eighths of a physical pixel, worked out once
+ * per frame: this test runs for every plotted pixel, and the ESP32-C3 has no
+ * FPU. For the 128-wide panels every value below is a whole number of
+ * eighths, so the result is exactly that of the original float test.
+ */
+static bool s_clip_enabled;
+static int32_t s_clip_cx8;
+static int32_t s_clip_cy8;
+static int64_t s_clip_r8_squared;
+
+static void sync_clip(void)
+{
+    const float radius = (((float)s_screen_h / 2.0f) - 10.0f) * s_scale;
+    s_clip_enabled = s_color_mode && radius > 0.0f;
+    s_clip_cx8 = (int32_t)floorf(
+        ((float)s_screen_w / 2.0f + VISIBLE_CENTER_OFFSET_X) * s_scale * 8.0f + 0.5f);
+    s_clip_cy8 = (int32_t)floorf(
+        ((float)s_screen_h / 2.0f + VISIBLE_CENTER_OFFSET_Y) * s_scale * 8.0f + 0.5f);
+    const int64_t r8 = (int64_t)floorf(radius * 8.0f + 0.5f);
+    s_clip_r8_squared = r8 * r8;
+}
+
 static bool inside_visible_area(int x, int y)
 {
-    if (!s_color_mode) {
+    if (!s_clip_enabled) {
         return true;
     }
-    const float cx = (float)s_screen_w / 2.0f + VISIBLE_CENTER_OFFSET_X;
-    const float cy = (float)s_screen_h / 2.0f + VISIBLE_CENTER_OFFSET_Y;
-    const float radius = ((float)s_screen_h / 2.0f) - 10.0f;
-    if (radius <= 0.0f) {
-        return true;
-    }
-    const float dx = (float)x + 0.5f - cx;
-    const float dy = (float)y + 0.5f - cy;
-    return (dx * dx + dy * dy) <= (radius * radius);
+    /* Pixel centres (x + 0.5) in eighths; 64-bit so far-off shapes cannot overflow. */
+    const int64_t dx = (int64_t)x * 8 + 4 - s_clip_cx8;
+    const int64_t dy = (int64_t)y * 8 + 4 - s_clip_cy8;
+    return dx * dx + dy * dy <= s_clip_r8_squared;
 }
 
 /* Every shape in this file draws through here. "on" is the current
  * foreground colour (s_fg_color) in colour mode and plain white in mono;
  * "off" is black either way, so lids and glares still read as erasing part
  * of the eye against the background. */
-static void plot(int x, int y, bool on)
+static void plot_px(int px, int py, bool on)
 {
     if (s_color_mode) {
-        if (!inside_visible_area(x, y)) {
+        if (!inside_visible_area(px, py)) {
             return;
         }
-        oled_display_set_pixel_rgb(x, y, on ? s_fg_color : 0x0000U);
+        oled_display_set_pixel_rgb(px, py, on ? s_fg_color : 0x0000U);
     } else {
-        oled_display_set_pixel(x, y, on);
+        oled_display_set_pixel(px, py, on); /* Mono always has s_scale 1. */
     }
+}
+
+/* A logical rectangle covers every physical pixel between its scaled edges. */
+static void fill_rect(int x, int y, int width, int height, bool on)
+{
+    const int px_end = to_px(x + width);
+    const int py_end = to_px(y + height);
+    for (int py = to_px(y); py < py_end; ++py) {
+        for (int px = to_px(x); px < px_end; ++px) {
+            plot_px(px, py, on);
+        }
+    }
+}
+
+/* One logical pixel: a block of about s_scale x s_scale physical pixels. */
+static void plot(int x, int y, bool on)
+{
+    fill_rect(x, y, 1, 1, on);
 }
 
 static void draw_text(int x, int y, const char *text)
 {
     if (s_color_mode) {
-        oled_display_draw_text_rgb(x, y, text, s_fg_color);
+        /* The display adapter sizes its glyphs for its own pixel density. */
+        oled_display_draw_text_rgb(to_px(x), to_px(y), text, s_fg_color);
     } else {
         oled_display_draw_text(x, y, text);
     }
@@ -309,15 +363,6 @@ static void update_idle_glance(uint32_t now_ms, int *gaze_x, int *gaze_y)
     *gaze_y += s_glance_y;
 }
 
-static void fill_rect(int x, int y, int width, int height, bool on)
-{
-    for (int row = 0; row < height; ++row) {
-        for (int column = 0; column < width; ++column) {
-            plot(x + column, y + row, on);
-        }
-    }
-}
-
 static void draw_rect_outline(int x, int y, int width, int height)
 {
     for (int column = 0; column < width; ++column) {
@@ -364,8 +409,14 @@ static void fill_round_rect(int cx, int cy, int width, int height,
     if (radius * 2 > width) { radius = width / 2; }
     if (radius * 2 > height) { radius = height / 2; }
 
-    const int x0 = cx - width / 2;
-    const int y0 = cy - height / 2;
+    /* Scale the box, then carve its corners at full panel resolution. */
+    const int x0 = to_px(cx - width / 2);
+    const int y0 = to_px(cy - height / 2);
+    width = to_px(cx - width / 2 + width) - x0;
+    height = to_px(cy - height / 2 + height) - y0;
+    radius = to_px(radius);
+    if (radius * 2 > width) { radius = width / 2; }
+    if (radius * 2 > height) { radius = height / 2; }
     for (int row = 0; row < height; ++row) {
         int inset = 0;
         const int from_top = radius - row;
@@ -378,7 +429,7 @@ static void fill_round_rect(int cx, int cy, int width, int height,
             inset = radius - (int)(chord + 0.5f);
         }
         for (int column = inset; column < width - inset; ++column) {
-            plot(x0 + column, y0 + row, on);
+            plot_px(x0 + column, y0 + row, on);
         }
     }
 }
@@ -426,8 +477,11 @@ static void paint_lids(int cx, int cy, int width, int height,
 static void paint_glare(int cx, int cy, int width, int height,
                         int depth_percent, bool is_right)
 {
-    const int x0 = cx - width / 2;
-    const int y0 = cy - height / 2;
+    /* The same box as fill_round_rect(), so the brow lines up with the eye. */
+    const int x0 = to_px(cx - width / 2);
+    const int y0 = to_px(cy - height / 2);
+    width = to_px(cx - width / 2 + width) - x0;
+    height = to_px(cy - height / 2 + height) - y0;
     const int tip_depth = (height * depth_percent) / 100;
 
     for (int column = 0; column < width; ++column) {
@@ -435,7 +489,7 @@ static void paint_glare(int cx, int cy, int width, int height,
         const int from_outer = is_right ? (width - 1 - column) : column;
         const int depth = (tip_depth * from_outer) / (width > 1 ? width - 1 : 1);
         for (int row = 0; row < depth && row < height; ++row) {
-            plot(x0 + column, y0 + row, false);
+            plot_px(x0 + column, y0 + row, false);
         }
     }
 }
@@ -464,14 +518,19 @@ static void cut_lid(int cx, int cy, int width, int height,
 /* A happy eye is an arch: a parabola peaking in the middle, drawn thick. */
 static void draw_arc_eye(int cx, int cy, int width, int height, int thickness)
 {
-    const int half = width / 2;
-    if (half <= 0) {
+    if (width / 2 <= 0) {
         return;
     }
+    /* Walk the parabola in physical pixels so the arch is smooth when scaled. */
+    const int half = to_px(width / 2);
+    const int x = to_px(cx);
+    const int top = to_px(cy - height / 2);
+    height = to_px(height);
+    thickness = to_px(thickness);
     for (int dx = -half; dx <= half; ++dx) {
-        const int y = cy - height / 2 + (dx * dx * height) / (half * half);
+        const int y = top + (dx * dx * height) / (half * half);
         for (int layer = 0; layer < thickness; ++layer) {
-            plot(cx + dx, y + layer, true);
+            plot_px(x + dx, y + layer, true);
         }
     }
 }
@@ -966,6 +1025,7 @@ esp_err_t pet_face_render(const pet_view_t *view, uint32_t now_ms)
     }
 
     sync_geometry();
+    sync_clip();
     s_fg_color = mood_color(view);
 
     face_frame_t frame;
