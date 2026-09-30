@@ -68,3 +68,13 @@ target_include_directories(test_motion_state PRIVATE
 )
 
 add_test(NAME motion_state COMMAND test_motion_state)
+
+# Gesture thresholds are portable and can be replayed without a physical MPU.
+add_executable(test_round_reactions
+    test_round_reactions.c
+    ../../components/round_reactions/round_reactions.c
+)
+target_include_directories(test_round_reactions PRIVATE
+    ../../components/round_reactions/include
+)
+add_test(NAME round_reactions COMMAND test_round_reactions)
