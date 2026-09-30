@@ -2,6 +2,9 @@
 
 # SmartMotion Keychain
 
+**Третья аппаратная итерация (первый тест экрана и сенсора):**
+[демо круглой платы ESP32-2424S012C-I](esp32_2424s012/README.md).
+
 [![v1](https://img.shields.io/badge/v1-ESP--IDF%206.0.1%20%C2%B7%20ESP32--C3-E7352C?style=flat-square&logo=espressif&logoColor=white)](https://github.com/espressif/esp-idf)
 [![v2](https://img.shields.io/badge/v2-Zephyr%204.2%20%C2%B7%20nRF52840-00A9CE?style=flat-square&logo=nordicsemiconductor&logoColor=white)](xiao_nrf52840)
 [![Firmware](https://img.shields.io/badge/firmware-C-00599C?style=flat-square&logo=c)](main/main.c)

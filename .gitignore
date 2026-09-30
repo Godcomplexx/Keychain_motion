@@ -2,6 +2,11 @@
 /build/
 /build-*/
 /managed_components/
+esp32_2424s012/build/
+esp32_2424s012/managed_components/
+esp32_2424s012/sdkconfig
+esp32_2424s012/sdkconfig.old
+esp32_2424s012/dependencies.lock
 sdkconfig
 sdkconfig.old
 
